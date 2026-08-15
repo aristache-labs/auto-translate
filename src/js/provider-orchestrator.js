@@ -457,6 +457,53 @@ function translatedFromResult(result) {
   return (result?.translated_text || result?.translatedText || '').trim();
 }
 
+export const LIVE_TRANSLATION_TIMEOUT_MS = 2500;
+export const LIVE_TRANSLATION_MIN_INTERVAL_MS = 800;
+export const LIVE_TRANSLATION_MIN_NEW_WORDS = 8;
+
+export function countWords(text) {
+  return String(text || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean).length;
+}
+
+export function shouldFireLiveTranslation({
+  text,
+  lastSentText = '',
+  lastSentAt = 0,
+  now = Date.now(),
+  minIntervalMs = LIVE_TRANSLATION_MIN_INTERVAL_MS,
+  minNewWords = LIVE_TRANSLATION_MIN_NEW_WORDS,
+} = {}) {
+  const trimmed = String(text || '').trim();
+  if (!trimmed) return false;
+  if (trimmed === String(lastSentText || '').trim()) return false;
+  const added = countWords(trimmed) - countWords(lastSentText);
+  if (added >= minNewWords) return true;
+  if (!lastSentAt) return true;
+  return now - lastSentAt >= minIntervalMs;
+}
+
+function withTimeout(promise, timeoutMs, provider) {
+  if (!timeoutMs || timeoutMs <= 0) return promise;
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      reject(createProviderError({
+        provider,
+        capability: 'translation',
+        kind: ERROR_TYPES.TEMPORARY,
+        status: 408,
+        message: `Translation timed out after ${timeoutMs}ms`,
+      }));
+    }, timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
 export async function translateWithChain({
   settings,
   activeStt,
@@ -467,11 +514,15 @@ export async function translateWithChain({
   generation,
   isCurrent,
   invoke,
+  timeoutMs = 0,
+  allowRetry = true,
+  mode = 'final',
 } = {}) {
   const source = (text || '').trim();
   if (!source) return { translatedText: '', provider: null, segmentId };
   const chain = getEffectiveTranslationChain(settings, activeStt);
   let lastError = null;
+  const startedAt = now();
 
   for (const provider of chain) {
     if (typeof isCurrent === 'function' && !isCurrent(segmentId, generation)) {
@@ -483,12 +534,19 @@ export async function translateWithChain({
     if (state?.state === 'half-open') noteHalfOpenProbe(key);
 
     try {
-      const result = await invokeTranslation(invoke, provider, settings, source, sourceLanguage, targetLanguage);
+      const result = await withTimeout(
+        invokeTranslation(invoke, provider, settings, source, sourceLanguage, targetLanguage),
+        timeoutMs,
+        provider,
+      );
       if (typeof isCurrent === 'function' && !isCurrent(segmentId, generation)) {
         return { ignored: true, segmentId, generation };
       }
       const translatedText = translatedFromResult(result) || source;
       noteProviderSuccess(key);
+      console.debug(
+        `[timing] translation.response mode=${mode} provider=${provider} ms=${now() - startedAt}`,
+      );
       return { translatedText, provider, segmentId, generation };
     } catch (err) {
       const parsed = applyProviderError({
@@ -497,14 +555,27 @@ export async function translateWithChain({
         capability: 'translation',
       });
       lastError = parsed;
-      // Never retry quota locally — skip immediately to the next provider.
-      if (parsed.kind === ERROR_TYPES.TEMPORARY && parsed.status !== 429) {
+      // Live path never retries the same provider — fall through immediately.
+      if (
+        allowRetry
+        && mode !== 'live'
+        && parsed.kind === ERROR_TYPES.TEMPORARY
+        && parsed.status !== 429
+        && parsed.status !== 408
+      ) {
         try {
-          const retry = await invokeTranslation(invoke, provider, settings, source, sourceLanguage, targetLanguage);
+          const retry = await withTimeout(
+            invokeTranslation(invoke, provider, settings, source, sourceLanguage, targetLanguage),
+            timeoutMs,
+            provider,
+          );
           if (typeof isCurrent === 'function' && !isCurrent(segmentId, generation)) {
             return { ignored: true, segmentId, generation };
           }
           noteProviderSuccess(key);
+          console.debug(
+            `[timing] translation.response mode=${mode} provider=${provider} retry=1 ms=${now() - startedAt}`,
+          );
           return { translatedText: translatedFromResult(retry) || source, provider, segmentId, generation };
         } catch (retryErr) {
           applyProviderError({
@@ -543,6 +614,11 @@ export default {
   parseProviderError,
   createProviderError,
   translateWithChain,
+  shouldFireLiveTranslation,
+  countWords,
+  LIVE_TRANSLATION_TIMEOUT_MS,
+  LIVE_TRANSLATION_MIN_INTERVAL_MS,
+  LIVE_TRANSLATION_MIN_NEW_WORDS,
   isCircuitBreakerHalfOpen,
   noteHalfOpenProbe,
   ERROR_TYPES,

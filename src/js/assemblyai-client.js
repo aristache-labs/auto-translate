@@ -15,6 +15,14 @@ export const ASSEMBLYAI_ENDPOINTS = {
 const TERMINATE_WAIT_MS = 1500;
 const CONNECT_TIMEOUT_MS = 8000;
 
+export function turnSilenceFromEndpointDelay(endpointDelayMs = 3000) {
+    const delay = Math.max(500, Math.min(Number(endpointDelayMs) || 3000, 3000));
+    return {
+        min_end_of_turn_silence_when_confident: String(delay),
+        max_turn_silence: String(Math.min(4000, delay + 800)),
+    };
+}
+
 function endpointForRegion(region) {
     const key = String(region || 'eu').toLowerCase();
     return ASSEMBLYAI_ENDPOINTS[key] || ASSEMBLYAI_ENDPOINTS.eu;
@@ -60,6 +68,7 @@ export class AssemblyAIClient {
             model: config.model || config.assemblyaiModel || 'universal-streaming-english',
             speakerLabels: !!(config.speakerLabels ?? config.assemblyaiSpeakerLabels),
             sourceLanguage: config.sourceLanguage || config.sourceLang || 'auto',
+            endpointDelayMs: config.endpointDelayMs ?? config.endpoint_delay ?? 3000,
         };
         this._intentionalDisconnect = false;
         this._generation += 1;
@@ -103,11 +112,14 @@ export class AssemblyAIClient {
                 message: 'WebSocket is unavailable',
             });
         }
+        const silence = turnSilenceFromEndpointDelay(this._config.endpointDelayMs);
         const params = new URLSearchParams({
             sample_rate: '16000',
             token,
             speech_model: this._config.model,
             format_turns: 'true',
+            min_end_of_turn_silence_when_confident: silence.min_end_of_turn_silence_when_confident,
+            max_turn_silence: silence.max_turn_silence,
         });
         if (this._config.speakerLabels) params.set('speaker_labels', 'true');
         const url = `${endpointForRegion(this._config.region)}?${params.toString()}`;

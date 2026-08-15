@@ -41,6 +41,9 @@ import {
     noteHalfOpenProbe,
     noteProviderSuccess,
     isCircuitBreakerHalfOpen,
+    shouldFireLiveTranslation,
+    LIVE_TRANSLATION_TIMEOUT_MS,
+    LIVE_TRANSLATION_MIN_INTERVAL_MS,
     ERROR_TYPES,
 } from './provider-orchestrator.js';
 import { ollamaTranslator } from './ollama-translator.js';
@@ -126,6 +129,12 @@ class App {
         this._handoffBuffer = [];
         this._translationJobs = new Map();
         this._translationQueue = Promise.resolve();
+        this._liveTranslationGen = 0;
+        this._liveSourceText = '';
+        this._liveSourceLang = null;
+        this._liveSentText = '';
+        this._liveSentAt = 0;
+        this._liveTranslateTimer = null;
         this._fallbackInFlight = false;
         this.transcriptUI = null;
         this.appWindow = getCurrentWindow();
@@ -752,11 +761,18 @@ class App {
         client.onStatusChange = (status) => this._updateStatus(status);
         client.onProvisional = (text, speaker, language) => {
             if (client !== this.activeSttClient) return;
-            if (text) this.transcriptUI.setProvisional(text, speaker, language);
-            else this.transcriptUI.clearProvisional();
+            if (text) {
+                console.debug(`[timing] stt.partial provider=${client.providerId} chars=${text.length}`);
+                this.transcriptUI.setProvisional(text, speaker, language);
+                this._onLiveSourcePartial(text, language);
+            } else {
+                this._invalidateLiveTranslation();
+                this.transcriptUI.clearProvisional();
+            }
         };
         client.onOriginal = (text, speaker, language) => {
             if (client !== this.activeSttClient) return;
+            console.debug(`[timing] stt.final provider=${client.providerId} chars=${(text || '').length}`);
             this._commitSourceTurn(text, speaker, language);
         };
         client.onError = (error) => {
@@ -2627,6 +2643,7 @@ class App {
         this._handoffBuffer = [];
         this._translationJobs.clear();
         this._translationQueue = Promise.resolve();
+        this._invalidateLiveTranslation();
         clearSessionState();
         this._setEnginePillLocked(false);
         this._updateStartButton();
@@ -2712,6 +2729,7 @@ class App {
                         region: settings.assemblyai_region || 'eu',
                         model: settings.assemblyai_streaming_model || 'universal-streaming-english',
                         speakerLabels: !!settings.assemblyai_speaker_labels,
+                        endpointDelayMs: settings.endpoint_delay || 3000,
                     });
                 } else {
                     client.connect(config);
@@ -2787,13 +2805,97 @@ class App {
         }
     }
 
+    _invalidateLiveTranslation() {
+        this._liveTranslationGen += 1;
+        this._liveSourceText = '';
+        this._liveSourceLang = null;
+        this._liveSentText = '';
+        this._liveSentAt = 0;
+        if (this._liveTranslateTimer) {
+            clearTimeout(this._liveTranslateTimer);
+            this._liveTranslateTimer = null;
+        }
+        this.transcriptUI?.clearTranslationProvisional?.();
+    }
+
+    _onLiveSourcePartial(text, language) {
+        const chunk = (text || '').trim();
+        if (!chunk || !this.isRunning) {
+            this._invalidateLiveTranslation();
+            return;
+        }
+        this._liveSourceText = chunk;
+        this._liveSourceLang = language || this.sessionSourceLang || 'auto';
+        const now = Date.now();
+        if (shouldFireLiveTranslation({
+            text: chunk,
+            lastSentText: this._liveSentText,
+            lastSentAt: this._liveSentAt,
+            now,
+        })) {
+            if (this._liveTranslateTimer) {
+                clearTimeout(this._liveTranslateTimer);
+                this._liveTranslateTimer = null;
+            }
+            void this._requestLiveTranslation();
+            return;
+        }
+        if (this._liveTranslateTimer) return;
+        const wait = Math.max(
+            50,
+            LIVE_TRANSLATION_MIN_INTERVAL_MS - (this._liveSentAt ? now - this._liveSentAt : 0),
+        );
+        this._liveTranslateTimer = setTimeout(() => {
+            this._liveTranslateTimer = null;
+            void this._requestLiveTranslation();
+        }, wait);
+    }
+
+    async _requestLiveTranslation() {
+        const text = (this._liveSourceText || '').trim();
+        if (!text || !this.isRunning) return;
+        if (text === this._liveSentText) return;
+        const gen = ++this._liveTranslationGen;
+        this._liveSentText = text;
+        this._liveSentAt = Date.now();
+        const settings = settingsManager.get();
+        const language = this._liveSourceLang || this.sessionSourceLang || settings.source_language || 'auto';
+        console.debug(`[timing] translation.start mode=live chars=${text.length}`);
+        try {
+            const result = await translateWithChain({
+                settings,
+                activeStt: this.activeSttProvider,
+                text,
+                sourceLanguage: language,
+                targetLanguage: this.sessionTargetLang || settings.target_language || 'vi',
+                segmentId: `live_${gen}`,
+                generation: gen,
+                isCurrent: (_id, g) => g === this._liveTranslationGen && this.isRunning,
+                invoke,
+                timeoutMs: LIVE_TRANSLATION_TIMEOUT_MS,
+                allowRetry: false,
+                mode: 'live',
+            });
+            if (result?.ignored) return;
+            if (gen !== this._liveTranslationGen || !this.isRunning) return;
+            const translated = (result.translatedText || '').trim();
+            if (!translated) return;
+            this.transcriptUI.setTranslationProvisional(translated);
+            console.debug(`[timing] ui.render mode=live chars=${translated.length}`);
+        } catch {
+            /* live failures are silent — final path remains authoritative */
+        }
+    }
+
     _commitSourceTurn(text, speaker, language) {
         const chunk = (text || '').trim();
         if (!chunk) return;
+        this._invalidateLiveTranslation();
         this.transcriptUI.clearProvisional();
         this.transcriptUI.addOriginal(chunk, speaker, language);
         const segmentId = allocateSegmentId();
         this._translationJobs.set(segmentId, { text: chunk });
+        console.debug(`[timing] translation.start mode=final segment=${segmentId} chars=${chunk.length}`);
         this._enqueueTranslation(segmentId, chunk, language);
         this._maybeRecoverStt();
     }
@@ -2806,6 +2908,7 @@ class App {
 
     async _translateSegment(segmentId, text, language) {
         const settings = settingsManager.get();
+        const startedAt = Date.now();
         try {
             const result = await translateWithChain({
                 settings,
@@ -2817,11 +2920,15 @@ class App {
                 generation: segmentId,
                 isCurrent: (id) => this._translationJobs.has(id),
                 invoke,
+                mode: 'final',
             });
             if (result?.ignored) return;
             if (!this._translationJobs.has(segmentId)) return;
             const translated = result.translatedText || text;
             this.transcriptUI.addTranslation(translated);
+            console.debug(
+                `[timing] ui.render mode=final segment=${segmentId} ms=${Date.now() - startedAt}`,
+            );
             this._speakIfEnabled(translated);
             sessionStore.addSegment(text, translated);
             this._translationJobs.delete(segmentId);
@@ -3088,6 +3195,7 @@ class App {
         await this._disconnectAllStt();
         this.activeSttProvider = null;
         this.activeSttClient = null;
+        this._invalidateLiveTranslation();
         this._updateStatus('disconnected');
 
         // Keep transcript visible — don't clear

@@ -84,8 +84,11 @@ export class TranscriptUI {
         this.sourceProvisionalText = '';
         this.provisionalVisible = 0;
         this.sourceProvisionalVisible = 0;
+        this.translationProvisionalText = '';
+        this.translationProvisionalVisible = 0;
         this._provisionalStartedAt = 0;
         this._sourceProvisionalStartedAt = 0;
+        this._translationProvisionalStartedAt = 0;
         this._animationFrame = null;
         this._animationLastAt = 0;
         this._tickTypewriter = this._tickTypewriter.bind(this);
@@ -336,6 +339,40 @@ export class TranscriptUI {
         this.provisionalLanguage = null;
         this.provisionalVisible = 0;
         this._provisionalStartedAt = 0;
+        this.translationProvisionalText = '';
+        this.translationProvisionalVisible = 0;
+        this._translationProvisionalStartedAt = 0;
+        this._render();
+    }
+
+    /**
+     * Replaceable live translation of the current provisional source turn.
+     * Never persisted to sessionLog / TTS — finals use addTranslation().
+     */
+    setTranslationProvisional(text) {
+        this._removeListening();
+        const nextText = text || '';
+        const previousVisible = this.translationProvisionalVisible;
+        const wasCaughtUp = previousVisible >= textLength(this.translationProvisionalText);
+        const stablePrefix = commonPrefixLength(this.translationProvisionalText, nextText);
+        this.translationProvisionalVisible = this._reducedMotion
+            ? textLength(nextText)
+            : Math.min(this.translationProvisionalVisible, stablePrefix);
+        const revisionTouchedVisibleText = stablePrefix < previousVisible;
+        if (!nextText) {
+            this._translationProvisionalStartedAt = 0;
+        } else if (!this._translationProvisionalStartedAt || wasCaughtUp || revisionTouchedVisibleText) {
+            this._translationProvisionalStartedAt = Date.now();
+        }
+        this.translationProvisionalText = nextText;
+        this._render();
+        this._queueTypewriter();
+    }
+
+    clearTranslationProvisional() {
+        this.translationProvisionalText = '';
+        this.translationProvisionalVisible = 0;
+        this._translationProvisionalStartedAt = 0;
         this._render();
     }
 
@@ -374,8 +411,9 @@ export class TranscriptUI {
      * Check if there is any content to display
      */
     hasContent() {
-        return this.segments.length > 0 || this.provisionalText || this.sourceProvisionalText ||
-            !!this.container.querySelector('.listening-indicator');
+        return this.segments.length > 0 || this.provisionalText || this.sourceProvisionalText
+            || this.translationProvisionalText
+            || !!this.container.querySelector('.listening-indicator');
     }
 
     /**
@@ -402,6 +440,8 @@ export class TranscriptUI {
         this.sourceProvisionalText = '';
         this.provisionalVisible = 0;
         this.sourceProvisionalVisible = 0;
+        this.translationProvisionalText = '';
+        this.translationProvisionalVisible = 0;
         this.currentSpeaker = null;
         this.currentLanguage = null;
         this.lastConfidence = null;
@@ -573,6 +613,8 @@ export class TranscriptUI {
         this.sourceProvisionalText = '';
         this.provisionalVisible = 0;
         this.sourceProvisionalVisible = 0;
+        this.translationProvisionalText = '';
+        this.translationProvisionalVisible = 0;
         this.currentSpeaker = null;
         this.currentLanguage = null;
         this.lastConfidence = null;
@@ -637,10 +679,13 @@ export class TranscriptUI {
         }
         const provisionalTotal = textLength(this.provisionalText);
         const sourceProvisionalTotal = textLength(this.sourceProvisionalText);
+        const translationProvisionalTotal = textLength(this.translationProvisionalText);
         if (this.provisionalVisible !== provisionalTotal) changed = true;
         if (this.sourceProvisionalVisible !== sourceProvisionalTotal) changed = true;
+        if (this.translationProvisionalVisible !== translationProvisionalTotal) changed = true;
         this.provisionalVisible = provisionalTotal;
         this.sourceProvisionalVisible = sourceProvisionalTotal;
+        this.translationProvisionalVisible = translationProvisionalTotal;
         return changed;
     }
 
@@ -683,6 +728,15 @@ export class TranscriptUI {
                 field: 'sourceProvisionalVisible',
                 total: textLength(this.sourceProvisionalText),
                 startedAt: this._sourceProvisionalStartedAt || Date.now(),
+                historical: false,
+            });
+        }
+        if (this.translationProvisionalVisible < textLength(this.translationProvisionalText)) {
+            tracks.push({
+                owner: this,
+                field: 'translationProvisionalVisible',
+                total: textLength(this.translationProvisionalText),
+                startedAt: this._translationProvisionalStartedAt || Date.now(),
                 historical: false,
             });
         }
@@ -811,18 +865,22 @@ export class TranscriptUI {
 
         const latest = this.segments[this.segments.length - 1];
         const isTargetStream = Boolean(this.sourceProvisionalText) || this.provider === 'qwen';
-        const recentFinal = isTargetStream ? latest?.translation : latest?.original;
-        const displayProvisional = repeatsRecentTail(recentFinal, this.provisionalText)
-            ? ''
-            : this.provisionalText;
+        const liveTranslation = this.translationProvisionalText;
+        const recentFinal = isTargetStream || liveTranslation ? latest?.translation : latest?.original;
+        const displayProvisional = liveTranslation
+            ? (repeatsRecentTail(recentFinal, liveTranslation) ? '' : liveTranslation)
+            : (repeatsRecentTail(recentFinal, this.provisionalText) ? '' : this.provisionalText);
+        const provisionalVisible = liveTranslation
+            ? this.translationProvisionalVisible
+            : this.provisionalVisible;
         if (displayProvisional) {
             rows += `
                 <article class="translation-line provisional-line is-current is-typing">
                     <div class="pair-meta">
-                        <span class="live-draft-label">${isTargetStream ? 'Translating' : 'Recognizing speech'}</span>
+                        <span class="live-draft-label">${isTargetStream || liveTranslation ? 'Translating' : 'Recognizing speech'}</span>
                     </div>
-                    <p class="translation-copy ${isTargetStream ? '' : 'source-draft'}" aria-label="${this._esc(displayProvisional)}">
-                        ${this._animatedMarkup(displayProvisional, this.provisionalVisible)}
+                    <p class="translation-copy ${isTargetStream || liveTranslation ? '' : 'source-draft'}" aria-label="${this._esc(displayProvisional)}">
+                        ${this._animatedMarkup(displayProvisional, provisionalVisible)}
                     </p>
                 </article>`;
         }
@@ -878,12 +936,17 @@ export class TranscriptUI {
                 </article>`;
         });
 
-        if (this.sourceProvisionalText || this.provisionalText) {
+        if (this.sourceProvisionalText || this.provisionalText || this.translationProvisionalText) {
             const usingOpenAi = this.provider === 'openai';
             const latest = this.segments[this.segments.length - 1];
             const rawSourceText = usingOpenAi ? this.sourceProvisionalText : this.provisionalText;
             const sourceVisible = usingOpenAi ? this.sourceProvisionalVisible : this.provisionalVisible;
-            const rawTargetText = usingOpenAi ? this.provisionalText : '';
+            const rawTargetText = usingOpenAi
+                ? this.provisionalText
+                : this.translationProvisionalText;
+            const targetVisible = usingOpenAi
+                ? this.provisionalVisible
+                : this.translationProvisionalVisible;
             const sourceText = repeatsRecentTail(latest?.original, rawSourceText) ? '' : rawSourceText;
             const targetText = repeatsRecentTail(latest?.translation, rawTargetText) ? '' : rawTargetText;
             if (sourceText || targetText) pairs += `
@@ -901,7 +964,7 @@ export class TranscriptUI {
                         <div class="pair-meta target-meta"><span class="translating-label">Translating</span></div>
                         <p class="pair-copy target-copy" aria-label="${this._esc(targetText || 'Translation pending')}">
                             ${targetText
-                                ? this._animatedMarkup(targetText, this.provisionalVisible)
+                                ? this._animatedMarkup(targetText, targetVisible)
                                 : '<span class="translation-pending" aria-hidden="true"><i></i><i></i><i></i></span>'}
                         </p>
                     </div>

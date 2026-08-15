@@ -26,6 +26,8 @@ import {
   setNowFn,
   allocateSegmentId,
   ERROR_TYPES,
+  shouldFireLiveTranslation,
+  LIVE_TRANSLATION_TIMEOUT_MS,
 } from '../src/js/provider-orchestrator.js';
 
 const FULL_SETTINGS = {
@@ -262,4 +264,55 @@ test('allocateSegmentId is unique', () => {
 test('parseProviderError never keeps bearer tokens', () => {
   const parsed = parseProviderError('authorization=Bearer super-secret-token HTTP 401');
   assert.equal(parsed.message.includes('super-secret-token'), false);
+});
+
+test('live translation throttle fires on new words or interval', () => {
+  assert.equal(shouldFireLiveTranslation({
+    text: 'one two three',
+    lastSentText: '',
+    lastSentAt: 0,
+  }), true);
+  assert.equal(shouldFireLiveTranslation({
+    text: 'one two three four five six seven eight nine ten',
+    lastSentText: 'one two',
+    lastSentAt: Date.now(),
+  }), true);
+  assert.equal(shouldFireLiveTranslation({
+    text: 'one two three',
+    lastSentText: 'one two three',
+    lastSentAt: Date.now(),
+  }), false);
+  assert.equal(shouldFireLiveTranslation({
+    text: 'one two three four',
+    lastSentText: 'one two three',
+    lastSentAt: Date.now() - 900,
+  }), true);
+});
+
+test('live translation mode skips same-provider retry and respects timeout', async () => {
+  resetAllCircuitBreakers();
+  let calls = 0;
+  const invoke = async () => {
+    calls += 1;
+    await new Promise((r) => setTimeout(r, 40));
+    throw new Error('HTTP 503');
+  };
+  await assert.rejects(() => translateWithChain({
+    settings: FULL_SETTINGS,
+    activeStt: 'assemblyai',
+    text: 'hello',
+    sourceLanguage: 'en',
+    targetLanguage: 'ro',
+    segmentId: 'live_1',
+    generation: 1,
+    isCurrent: () => true,
+    invoke,
+    timeoutMs: LIVE_TRANSLATION_TIMEOUT_MS,
+    allowRetry: false,
+    mode: 'live',
+  }));
+  // One attempt per available provider — no same-provider retry in live mode.
+  assert.ok(calls >= 1);
+  assert.equal(calls, getEffectiveTranslationChain(FULL_SETTINGS, 'assemblyai').length);
+  resetAllCircuitBreakers();
 });

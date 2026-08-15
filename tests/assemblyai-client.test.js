@@ -74,6 +74,19 @@ test('Terminate is sent on disconnect and connection is closed', async () => {
     assert.equal(client.isConnected, false);
 });
 
+test('endpoint_delay maps to AssemblyAI turn silence query params', async () => {
+    const { turnSilenceFromEndpointDelay } = await import('../src/js/assemblyai-client.js');
+    assert.deepEqual(turnSilenceFromEndpointDelay(800), {
+        min_end_of_turn_silence_when_confident: '800',
+        max_turn_silence: '1600',
+    });
+    const client = makeClient();
+    await client.connect({ region: 'eu', endpointDelayMs: 1200 });
+    const ws = FakeWebSocket.instances[0];
+    assert.match(ws.url, /min_end_of_turn_silence_when_confident=1200/);
+    assert.match(ws.url, /max_turn_silence=2000/);
+});
+
 test('failed start does not leave a socket billing', async () => {
     setProviderInvoke(async () => {
         throw new Error('HTTP 401');
