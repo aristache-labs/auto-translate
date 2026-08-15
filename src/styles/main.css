@@ -2941,6 +2941,11 @@ body.expanded #transcript-content {
   min-height: 1.4em;
 }
 
+.translation-pending.is-inline {
+  margin-left: 8px;
+  vertical-align: 0.12em;
+}
+
 .translation-pending i {
   display: block;
   width: 4px;

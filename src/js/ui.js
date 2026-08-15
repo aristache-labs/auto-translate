@@ -5,6 +5,37 @@ import {
     visibleText,
 } from './adaptive-typewriter.js';
 
+const SENTENCE_BOUNDARY_RE = /[.!?…]+["'”’)\]]*(?=\s|$)/g;
+const MERGE_MAX_CHARS = 560;
+const MERGE_MAX_GAP_MS = 7000;
+const MERGE_MAX_SENTENCES = 3;
+
+function joinSpeech(prev, next) {
+    const a = (prev || '').trim();
+    const b = (next || '').trim();
+    if (!a) return b;
+    if (!b) return a;
+    return `${a} ${b}`.replace(/\s+/g, ' ');
+}
+
+function sentenceCount(text) {
+    return ((text || '').match(SENTENCE_BOUNDARY_RE) || []).length;
+}
+
+function normalizedSpeech(text) {
+    return (text || '')
+        .toLocaleLowerCase()
+        .replace(/[^\p{L}\p{N}]+/gu, ' ')
+        .trim();
+}
+
+function repeatsRecentTail(recentText, candidate) {
+    const recent = normalizedSpeech(recentText);
+    const next = normalizedSpeech(candidate);
+    if (!recent || !next) return false;
+    return recent === next || (next.length >= 12 && recent.endsWith(next));
+}
+
 /**
  * Transcript UI — paired live interpretation with speaker diarization.
  *
@@ -124,24 +155,58 @@ export class TranscriptUI {
      */
     addOriginal(text, speaker, language) {
         this._removeListening();
+        const chunk = (text || '').trim();
+        if (!chunk) return;
+
+        const last = this.segments[this.segments.length - 1];
+        if (last && this._canMergeOriginal(last, chunk, speaker, language)) {
+            const previousTotal = textLength(last.original);
+            const wasCaughtUp = (last.originalVisible ?? previousTotal) >= previousTotal;
+            const now = Date.now();
+            last.original = joinSpeech(last.original, chunk);
+            last.pendingTranslations = (last.pendingTranslations ?? 0) + 1;
+            last.updatedAt = now;
+            if (this._reducedMotion) {
+                last.originalVisible = textLength(last.original);
+            } else if (wasCaughtUp) {
+                last.originalVisible = previousTotal;
+                last.originalAnimationStartedAt = now;
+            }
+            if (speaker) last.speaker = speaker;
+            if (language) last.language = language;
+            const logSeg = this.sessionLog.find((s) => s.createdAt === last.createdAt)
+                || this.sessionLog[this.sessionLog.length - 1];
+            if (logSeg) {
+                logSeg.original = last.original;
+                logSeg.speaker = last.speaker;
+                logSeg.language = last.language;
+            }
+            if (speaker) this.currentSpeaker = speaker;
+            if (language) this.currentLanguage = language;
+            this._render();
+            this._queueTypewriter();
+            return;
+        }
+
         const createdAt = Date.now();
         const seg = {
-            original: text,
+            original: chunk,
             translation: null,
             status: 'original',
             speaker: speaker || null,
             language: language || null,
             confidence: this.lastConfidence,
             createdAt,
-            originalVisible: this._reducedMotion ? textLength(text) : 0,
+            updatedAt: createdAt,
+            pendingTranslations: 1,
+            originalVisible: this._reducedMotion ? textLength(chunk) : 0,
             translationVisible: 0,
             originalAnimationStartedAt: createdAt,
             translationAnimationStartedAt: 0,
         };
         this.segments.push(seg);
-        // Also push a separate copy to sessionLog (never trimmed)
         this.sessionLog.push({
-            original: text,
+            original: chunk,
             translation: null,
             status: 'original',
             speaker: speaker || null,
@@ -160,37 +225,61 @@ export class TranscriptUI {
      * Apply translation to the oldest untranslated segment
      */
     addTranslation(text) {
-        const seg = this.segments.find(s => s.status === 'original');
+        const chunk = (text || '').trim();
+        if (!chunk) return;
+        const seg = this.segments.find((s) => (s.pendingTranslations || 0) > 0)
+            || this.segments.find((s) => s.status === 'original');
         if (seg) {
-            seg.translation = text;
+            seg.translation = seg.translation
+                ? joinSpeech(seg.translation, chunk)
+                : chunk;
             seg.status = 'translated';
-            seg.translationVisible = this._reducedMotion ? textLength(text) : 0;
+            seg.pendingTranslations = Math.max(0, (seg.pendingTranslations || 1) - 1);
+            seg.updatedAt = Date.now();
+            if (!seg.translationAnimationStartedAt) {
+                seg.translationVisible = this._reducedMotion ? textLength(seg.translation) : 0;
+            }
             seg.translationAnimationStartedAt = Date.now();
-            // Mirror update in sessionLog: find matching entry by createdAt
-            const logSeg = this.sessionLog.find(
-                s => s.status === 'original' && s.createdAt === seg.createdAt
-            );
+            const logSeg = this.sessionLog.find((s) => s.createdAt === seg.createdAt);
             if (logSeg) {
-                logSeg.translation = text;
+                logSeg.translation = seg.translation;
                 logSeg.status = 'translated';
             }
         } else {
             const createdAt = Date.now();
-            const newSeg = {
-                original: '',
-                translation: text,
-                status: 'translated',
-                speaker: null,
-                createdAt,
-                originalVisible: 0,
-                translationVisible: this._reducedMotion ? textLength(text) : 0,
-                originalAnimationStartedAt: 0,
-                translationAnimationStartedAt: createdAt,
-            };
-            this.segments.push(newSeg);
-            this.sessionLog.push({ ...newSeg });
+            const last = this.segments[this.segments.length - 1];
+            if (this._canMergeTranslationOnly(last, chunk)) {
+                const previousTotal = textLength(last.translation);
+                const wasCaughtUp = (last.translationVisible ?? previousTotal) >= previousTotal;
+                last.translation = joinSpeech(last.translation, chunk);
+                last.updatedAt = createdAt;
+                if (this._reducedMotion) {
+                    last.translationVisible = textLength(last.translation);
+                } else if (wasCaughtUp) {
+                    last.translationVisible = previousTotal;
+                    last.translationAnimationStartedAt = createdAt;
+                }
+                const logSeg = this.sessionLog.find((s) => s.createdAt === last.createdAt);
+                if (logSeg) logSeg.translation = last.translation;
+            } else {
+                const newSeg = {
+                    original: '',
+                    translation: chunk,
+                    status: 'translated',
+                    speaker: null,
+                    createdAt,
+                    updatedAt: createdAt,
+                    pendingTranslations: 0,
+                    originalVisible: 0,
+                    translationVisible: this._reducedMotion ? textLength(chunk) : 0,
+                    originalAnimationStartedAt: 0,
+                    translationAnimationStartedAt: createdAt,
+                };
+                this.segments.push(newSeg);
+                this.sessionLog.push({ ...newSeg });
+            }
         }
-        this._announce(text);
+        this._announce(chunk);
         this._render();
         this._queueTypewriter();
     }
@@ -702,15 +791,20 @@ export class TranscriptUI {
                 </article>`;
         });
 
-        if (this.provisionalText) {
-            const isTargetStream = Boolean(this.sourceProvisionalText) || this.provider === 'qwen';
+        const latest = this.segments[this.segments.length - 1];
+        const isTargetStream = Boolean(this.sourceProvisionalText) || this.provider === 'qwen';
+        const recentFinal = isTargetStream ? latest?.translation : latest?.original;
+        const displayProvisional = repeatsRecentTail(recentFinal, this.provisionalText)
+            ? ''
+            : this.provisionalText;
+        if (displayProvisional) {
             rows += `
                 <article class="translation-line provisional-line is-current is-typing">
                     <div class="pair-meta">
                         <span class="live-draft-label">${isTargetStream ? 'Translating' : 'Recognizing speech'}</span>
                     </div>
-                    <p class="translation-copy ${isTargetStream ? '' : 'source-draft'}" aria-label="${this._esc(this.provisionalText)}">
-                        ${this._animatedMarkup(this.provisionalText, this.provisionalVisible)}
+                    <p class="translation-copy ${isTargetStream ? '' : 'source-draft'}" aria-label="${this._esc(displayProvisional)}">
+                        ${this._animatedMarkup(displayProvisional, this.provisionalVisible)}
                     </p>
                 </article>`;
         }
@@ -734,7 +828,9 @@ export class TranscriptUI {
             const translationVisible = seg.translationVisible ?? translationTotal;
             const sourceTyping = originalVisible < originalTotal;
             const targetTyping = translationVisible < translationTotal;
-            const isPending = seg.status === 'original' || !seg.translation;
+            const isPending = (seg.pendingTranslations || 0) > 0
+                || seg.status === 'original'
+                || !seg.translation;
             const confidenceClass = (seg.confidence !== null && seg.confidence < 0.7)
                 ? ' low-confidence'
                 : '';
@@ -755,9 +851,10 @@ export class TranscriptUI {
                             <span class="${isPending ? 'translating-label' : 'translated-label'}">${isPending ? 'Translating' : 'Translated'}</span>
                         </div>
                         <p class="pair-copy target-copy${confidenceClass}" aria-label="${this._esc(seg.translation || 'Translation pending')}">
+                            ${seg.translation ? this._animatedMarkup(seg.translation, translationVisible) : ''}
                             ${isPending
-                                ? '<span class="translation-pending" aria-hidden="true"><i></i><i></i><i></i></span>'
-                                : this._animatedMarkup(seg.translation, translationVisible)}
+                                ? `<span class="translation-pending${seg.translation ? ' is-inline' : ''}" aria-hidden="true"><i></i><i></i><i></i></span>`
+                                : ''}
                         </p>
                     </div>
                 </article>`;
@@ -765,10 +862,13 @@ export class TranscriptUI {
 
         if (this.sourceProvisionalText || this.provisionalText) {
             const usingOpenAi = this.provider === 'openai';
-            const sourceText = usingOpenAi ? this.sourceProvisionalText : this.provisionalText;
+            const latest = this.segments[this.segments.length - 1];
+            const rawSourceText = usingOpenAi ? this.sourceProvisionalText : this.provisionalText;
             const sourceVisible = usingOpenAi ? this.sourceProvisionalVisible : this.provisionalVisible;
-            const targetText = usingOpenAi ? this.provisionalText : '';
-            pairs += `
+            const rawTargetText = usingOpenAi ? this.provisionalText : '';
+            const sourceText = repeatsRecentTail(latest?.original, rawSourceText) ? '' : rawSourceText;
+            const targetText = repeatsRecentTail(latest?.translation, rawTargetText) ? '' : rawTargetText;
+            if (sourceText || targetText) pairs += `
                 <article class="transcript-pair provisional-pair is-current is-typing">
                     <div class="pair-cell pair-source">
                         <div class="pair-meta"><span class="live-draft-label">Listening live</span></div>
@@ -821,6 +921,26 @@ export class TranscriptUI {
         }
     }
 
+    _canMergeOriginal(last, chunk, speaker, language) {
+        if (!last?.original) return false;
+        if (speaker && last.speaker && speaker !== last.speaker) return false;
+        if (language && last.language && language !== last.language) return false;
+        const lastAt = last.updatedAt || last.createdAt || 0;
+        if (Date.now() - lastAt > MERGE_MAX_GAP_MS) return false;
+        const combined = joinSpeech(last.original, chunk);
+        if (combined.length > MERGE_MAX_CHARS) return false;
+        return sentenceCount(combined) <= MERGE_MAX_SENTENCES;
+    }
+
+    _canMergeTranslationOnly(last, chunk) {
+        if (!last?.translation || last.original || (last.pendingTranslations || 0) > 0) return false;
+        const lastAt = last.updatedAt || last.createdAt || 0;
+        if (Date.now() - lastAt > MERGE_MAX_GAP_MS) return false;
+        const combined = joinSpeech(last.translation, chunk);
+        return combined.length <= MERGE_MAX_CHARS
+            && sentenceCount(combined) <= MERGE_MAX_SENTENCES;
+    }
+
     _trimSegments() {
         let totalLen = 0;
         for (const seg of this.segments) {
@@ -844,7 +964,7 @@ export class TranscriptUI {
 
         // Remove originals older than STALE_MS
         this.segments = this.segments.filter(seg => {
-            if (seg.status === 'original' && (now - seg.createdAt) > STALE_MS) {
+            if (seg.status === 'original' && (now - (seg.updatedAt || seg.createdAt)) > STALE_MS) {
                 return false; // drop stale
             }
             return true;
