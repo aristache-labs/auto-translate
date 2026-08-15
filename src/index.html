@@ -214,7 +214,7 @@
       </div>
     </div>
 
-    <!-- Read activity panel — paste Vietnamese text, hear it read aloud -->
+    <!-- Read activity panel — paste text, hear it read aloud -->
     <div id="read-panel" class="activity-panel" data-activity="read">
       <!-- Quick-pick: change voice without leaving the panel -->
       <div class="read-quick-row">
@@ -222,7 +222,7 @@
         <select id="read-voice-quick" class="source-select"></select>
         <button id="btn-read-tts-settings" class="read-quick-more" type="button" title="Open all TTS settings">More Settings…</button>
       </div>
-      <textarea id="read-input" placeholder="Type Vietnamese — or put anything else…"></textarea>
+      <textarea id="read-input" placeholder="Type or paste text to read aloud…"></textarea>
       <div id="read-output" class="read-output" style="display:none"></div>
       <div class="read-progress-bar"><div id="read-progress-fill"></div></div>
       <div class="read-controls">
@@ -837,13 +837,80 @@
           <div class="field">
             <span class="field-label">Voice</span>
             <select id="select-edge-voice">
-              <option value="vi-VN-HoaiMyNeural">HoaiMy — Female 🇻🇳</option>
-              <option value="vi-VN-NamMinhNeural">NamMinh — Male 🇻🇳</option>
-              <option value="en-US-JennyNeural">Jenny — Female 🇺🇸</option>
-              <option value="en-US-GuyNeural">Guy — Male 🇺🇸</option>
-              <option value="ja-JP-NanamiNeural">Nanami — 女性 🇯🇵</option>
-              <option value="ko-KR-SunHiNeural">SunHi — 여성 🇰🇷</option>
-              <option value="zh-CN-XiaoxiaoNeural">Xiaoxiao — 女声 🇨🇳</option>
+              <optgroup label="Vietnamese">
+                <option value="vi-VN-HoaiMyNeural">HoaiMy — Female</option>
+                <option value="vi-VN-NamMinhNeural">NamMinh — Male</option>
+              </optgroup>
+              <optgroup label="English">
+                <option value="en-US-JennyNeural">Jenny — Female (US)</option>
+                <option value="en-US-GuyNeural">Guy — Male (US)</option>
+                <option value="en-GB-SoniaNeural">Sonia — Female (UK)</option>
+                <option value="en-GB-RyanNeural">Ryan — Male (UK)</option>
+              </optgroup>
+              <optgroup label="Romanian">
+                <option value="ro-RO-AlinaNeural">Alina — Female</option>
+                <option value="ro-RO-EmilNeural">Emil — Male</option>
+              </optgroup>
+              <optgroup label="French">
+                <option value="fr-FR-DeniseNeural">Denise — Female</option>
+                <option value="fr-FR-HenriNeural">Henri — Male</option>
+              </optgroup>
+              <optgroup label="German">
+                <option value="de-DE-KatjaNeural">Katja — Female</option>
+                <option value="de-DE-ConradNeural">Conrad — Male</option>
+              </optgroup>
+              <optgroup label="Spanish">
+                <option value="es-ES-ElviraNeural">Elvira — Female</option>
+                <option value="es-ES-AlvaroNeural">Alvaro — Male</option>
+              </optgroup>
+              <optgroup label="Italian">
+                <option value="it-IT-ElsaNeural">Elsa — Female</option>
+                <option value="it-IT-DiegoNeural">Diego — Male</option>
+              </optgroup>
+              <optgroup label="Portuguese">
+                <option value="pt-BR-FranciscaNeural">Francisca — Female (BR)</option>
+                <option value="pt-PT-RaquelNeural">Raquel — Female (PT)</option>
+              </optgroup>
+              <optgroup label="Japanese">
+                <option value="ja-JP-NanamiNeural">Nanami — Female</option>
+                <option value="ja-JP-KeitaNeural">Keita — Male</option>
+              </optgroup>
+              <optgroup label="Korean">
+                <option value="ko-KR-SunHiNeural">SunHi — Female</option>
+                <option value="ko-KR-InJoonNeural">InJoon — Male</option>
+              </optgroup>
+              <optgroup label="Chinese">
+                <option value="zh-CN-XiaoxiaoNeural">Xiaoxiao — Female</option>
+                <option value="zh-CN-YunxiNeural">Yunxi — Male</option>
+              </optgroup>
+              <optgroup label="Polish">
+                <option value="pl-PL-AgnieszkaNeural">Agnieszka — Female</option>
+                <option value="pl-PL-MarekNeural">Marek — Male</option>
+              </optgroup>
+              <optgroup label="Dutch">
+                <option value="nl-NL-FennaNeural">Fenna — Female</option>
+                <option value="nl-NL-MaartenNeural">Maarten — Male</option>
+              </optgroup>
+              <optgroup label="Turkish">
+                <option value="tr-TR-EmelNeural">Emel — Female</option>
+                <option value="tr-TR-AhmetNeural">Ahmet — Male</option>
+              </optgroup>
+              <optgroup label="Russian">
+                <option value="ru-RU-SvetlanaNeural">Svetlana — Female</option>
+                <option value="ru-RU-DmitryNeural">Dmitry — Male</option>
+              </optgroup>
+              <optgroup label="Arabic">
+                <option value="ar-SA-ZariyahNeural">Zariyah — Female</option>
+                <option value="ar-SA-HamedNeural">Hamed — Male</option>
+              </optgroup>
+              <optgroup label="Thai">
+                <option value="th-TH-PremwadeeNeural">Premwadee — Female</option>
+                <option value="th-TH-NiwatNeural">Niwat — Male</option>
+              </optgroup>
+              <optgroup label="Indonesian">
+                <option value="id-ID-GadisNeural">Gadis — Female</option>
+                <option value="id-ID-ArdiNeural">Ardi — Male</option>
+              </optgroup>
             </select>
           </div>
           <div class="slider-field" style="margin-top: 8px;">
@@ -858,8 +925,10 @@
           <div class="field">
             <span class="field-label">Language</span>
             <select id="select-microsoft-lang">
-              <option value="vi">Vietnamese — Tiếng Việt</option>
+              <!-- Filled dynamically from Microsoft voice list -->
+              <option value="vi">Vietnamese</option>
               <option value="en">English</option>
+              <option value="ro">Romanian</option>
             </select>
           </div>
           <div class="field" style="margin-top: 8px;">
@@ -891,8 +960,26 @@
           <div class="field" style="margin-top: 8px;">
             <span class="field-label">Voice</span>
             <select id="select-google-free-voice">
-              <option value="vi-VN">Tiếng Việt 🇻🇳</option>
-              <option value="en-US">English 🇺🇸</option>
+              <option value="vi-VN">Vietnamese</option>
+              <option value="en-US">English (US)</option>
+              <option value="en-GB">English (UK)</option>
+              <option value="ro-RO">Romanian</option>
+              <option value="fr-FR">French</option>
+              <option value="de-DE">German</option>
+              <option value="es-ES">Spanish</option>
+              <option value="it-IT">Italian</option>
+              <option value="pt-BR">Portuguese (BR)</option>
+              <option value="pl-PL">Polish</option>
+              <option value="nl-NL">Dutch</option>
+              <option value="tr-TR">Turkish</option>
+              <option value="ru-RU">Russian</option>
+              <option value="ja-JP">Japanese</option>
+              <option value="ko-KR">Korean</option>
+              <option value="zh-CN">Chinese</option>
+              <option value="ar">Arabic</option>
+              <option value="th-TH">Thai</option>
+              <option value="id-ID">Indonesian</option>
+              <option value="uk-UA">Ukrainian</option>
             </select>
           </div>
           <div class="slider-field" style="margin-top: 8px;">
@@ -908,13 +995,38 @@
           <div class="field">
             <span class="field-label">Voice</span>
             <select id="select-tiktok-voice">
-              <optgroup label="🇻🇳 Vietnamese">
+              <optgroup label="Vietnamese">
                 <option value="BV074_streaming">Female (vi)</option>
                 <option value="BV075_streaming">Male (vi)</option>
               </optgroup>
-              <optgroup label="🇺🇸 English">
+              <optgroup label="English">
                 <option value="en_us_001">Female (en)</option>
                 <option value="en_us_006">Male (en)</option>
+                <option value="en_uk_001">Female (en-UK)</option>
+                <option value="en_uk_003">Male (en-UK)</option>
+              </optgroup>
+              <optgroup label="Japanese">
+                <option value="jp_001">Female (ja)</option>
+                <option value="jp_006">Male (ja)</option>
+              </optgroup>
+              <optgroup label="Korean">
+                <option value="kr_002">Male (ko)</option>
+                <option value="kr_003">Female (ko)</option>
+              </optgroup>
+              <optgroup label="Spanish">
+                <option value="es_mx_002">Male (es)</option>
+              </optgroup>
+              <optgroup label="Portuguese">
+                <option value="br_001">Female (pt-BR)</option>
+                <option value="br_003">Male (pt-BR)</option>
+              </optgroup>
+              <optgroup label="German">
+                <option value="de_001">Female (de)</option>
+                <option value="de_002">Male (de)</option>
+              </optgroup>
+              <optgroup label="French">
+                <option value="fr_001">Female (fr)</option>
+                <option value="fr_002">Male (fr)</option>
               </optgroup>
             </select>
           </div>
@@ -940,8 +1052,30 @@
           <div class="field">
             <span class="field-label">Language</span>
             <select id="select-local-lang">
-              <option value="vi">Vietnamese — Tiếng Việt</option>
+              <!-- Rebuilt from catalog languages when Local TTS opens -->
+              <option value="vi">Vietnamese</option>
               <option value="en">English</option>
+              <option value="ro">Romanian</option>
+              <option value="fr">French</option>
+              <option value="de">German</option>
+              <option value="es">Spanish</option>
+              <option value="it">Italian</option>
+              <option value="pt">Portuguese</option>
+              <option value="pl">Polish</option>
+              <option value="nl">Dutch</option>
+              <option value="cs">Czech</option>
+              <option value="sk">Slovak</option>
+              <option value="hu">Hungarian</option>
+              <option value="el">Greek</option>
+              <option value="sv">Swedish</option>
+              <option value="da">Danish</option>
+              <option value="ru">Russian</option>
+              <option value="uk">Ukrainian</option>
+              <option value="tr">Turkish</option>
+              <option value="zh">Chinese</option>
+              <option value="ar">Arabic</option>
+              <option value="hi">Hindi</option>
+              <option value="id">Indonesian</option>
             </select>
           </div>
           <div class="field" style="margin-top: 8px;">
@@ -979,7 +1113,7 @@
           <div class="field" style="margin-top: 8px;">
             <span class="field-label">Voice</span>
             <select id="select-google-voice">
-              <optgroup label="🇻🇳 Vietnamese">
+              <optgroup label="Vietnamese">
                 <option value="vi-VN-Chirp3-HD-Aoede">Aoede — Female</option>
                 <option value="vi-VN-Chirp3-HD-Kore">Kore — Female</option>
                 <option value="vi-VN-Chirp3-HD-Leda">Leda — Female</option>
@@ -987,23 +1121,47 @@
                 <option value="vi-VN-Chirp3-HD-Fenrir">Fenrir — Male</option>
                 <option value="vi-VN-Chirp3-HD-Puck">Puck — Male</option>
               </optgroup>
-              <optgroup label="🇺🇸 English">
+              <optgroup label="English">
                 <option value="en-US-Chirp3-HD-Aoede">Aoede — Female</option>
                 <option value="en-US-Chirp3-HD-Kore">Kore — Female</option>
                 <option value="en-US-Chirp3-HD-Charon">Charon — Male</option>
                 <option value="en-US-Chirp3-HD-Puck">Puck — Male</option>
               </optgroup>
-              <optgroup label="🇯🇵 Japanese">
-                <option value="ja-JP-Chirp3-HD-Aoede">Aoede — 女性</option>
-                <option value="ja-JP-Chirp3-HD-Charon">Charon — 男性</option>
+              <optgroup label="Romanian">
+                <option value="ro-RO-Chirp3-HD-Aoede">Aoede — Female</option>
+                <option value="ro-RO-Chirp3-HD-Charon">Charon — Male</option>
               </optgroup>
-              <optgroup label="🇰🇷 Korean">
-                <option value="ko-KR-Chirp3-HD-Aoede">Aoede — 여성</option>
-                <option value="ko-KR-Chirp3-HD-Charon">Charon — 남성</option>
+              <optgroup label="French">
+                <option value="fr-FR-Chirp3-HD-Aoede">Aoede — Female</option>
+                <option value="fr-FR-Chirp3-HD-Charon">Charon — Male</option>
               </optgroup>
-              <optgroup label="🇨🇳 Chinese">
-                <option value="cmn-CN-Chirp3-HD-Aoede">Aoede — 女声</option>
-                <option value="cmn-CN-Chirp3-HD-Charon">Charon — 男声</option>
+              <optgroup label="German">
+                <option value="de-DE-Chirp3-HD-Aoede">Aoede — Female</option>
+                <option value="de-DE-Chirp3-HD-Charon">Charon — Male</option>
+              </optgroup>
+              <optgroup label="Spanish">
+                <option value="es-ES-Chirp3-HD-Aoede">Aoede — Female</option>
+                <option value="es-ES-Chirp3-HD-Charon">Charon — Male</option>
+              </optgroup>
+              <optgroup label="Italian">
+                <option value="it-IT-Chirp3-HD-Aoede">Aoede — Female</option>
+                <option value="it-IT-Chirp3-HD-Charon">Charon — Male</option>
+              </optgroup>
+              <optgroup label="Portuguese">
+                <option value="pt-BR-Chirp3-HD-Aoede">Aoede — Female</option>
+                <option value="pt-BR-Chirp3-HD-Charon">Charon — Male</option>
+              </optgroup>
+              <optgroup label="Japanese">
+                <option value="ja-JP-Chirp3-HD-Aoede">Aoede — Female</option>
+                <option value="ja-JP-Chirp3-HD-Charon">Charon — Male</option>
+              </optgroup>
+              <optgroup label="Korean">
+                <option value="ko-KR-Chirp3-HD-Aoede">Aoede — Female</option>
+                <option value="ko-KR-Chirp3-HD-Charon">Charon — Male</option>
+              </optgroup>
+              <optgroup label="Chinese">
+                <option value="cmn-CN-Chirp3-HD-Aoede">Aoede — Female</option>
+                <option value="cmn-CN-Chirp3-HD-Charon">Charon — Male</option>
               </optgroup>
             </select>
           </div>

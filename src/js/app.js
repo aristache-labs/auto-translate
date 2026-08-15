@@ -47,11 +47,51 @@ const { invoke, Channel } = window.__TAURI__.core;
 const { getCurrentWindow } = window.__TAURI__.window;
 
 // Static fallback for Microsoft v2 voices when the live list endpoint is unreachable.
+const MS_LANG_LABELS = {
+    vi: 'Vietnamese',
+    en: 'English',
+    ro: 'Romanian',
+    fr: 'French',
+    de: 'German',
+    es: 'Spanish',
+    it: 'Italian',
+    pt: 'Portuguese',
+    pl: 'Polish',
+    nl: 'Dutch',
+    tr: 'Turkish',
+    ru: 'Russian',
+    ja: 'Japanese',
+    ko: 'Korean',
+    zh: 'Chinese',
+    ar: 'Arabic',
+    th: 'Thai',
+    id: 'Indonesian',
+    uk: 'Ukrainian',
+    hi: 'Hindi',
+    sv: 'Swedish',
+    da: 'Danish',
+    fi: 'Finnish',
+    nb: 'Norwegian',
+    cs: 'Czech',
+    el: 'Greek',
+    he: 'Hebrew',
+    hu: 'Hungarian',
+    ms: 'Malay',
+};
+
 const MS_VOICE_FALLBACK = [
     { short_name: 'vi-VN-HoaiMyNeural', friendly_name: 'HoaiMy', gender: 'Female', locale: 'vi-VN' },
     { short_name: 'vi-VN-NamMinhNeural', friendly_name: 'NamMinh', gender: 'Male', locale: 'vi-VN' },
     { short_name: 'en-US-JennyNeural', friendly_name: 'Jenny', gender: 'Female', locale: 'en-US' },
     { short_name: 'en-US-GuyNeural', friendly_name: 'Guy', gender: 'Male', locale: 'en-US' },
+    { short_name: 'ro-RO-AlinaNeural', friendly_name: 'Alina', gender: 'Female', locale: 'ro-RO' },
+    { short_name: 'ro-RO-EmilNeural', friendly_name: 'Emil', gender: 'Male', locale: 'ro-RO' },
+    { short_name: 'fr-FR-DeniseNeural', friendly_name: 'Denise', gender: 'Female', locale: 'fr-FR' },
+    { short_name: 'de-DE-KatjaNeural', friendly_name: 'Katja', gender: 'Female', locale: 'de-DE' },
+    { short_name: 'es-ES-ElviraNeural', friendly_name: 'Elvira', gender: 'Female', locale: 'es-ES' },
+    { short_name: 'ja-JP-NanamiNeural', friendly_name: 'Nanami', gender: 'Female', locale: 'ja-JP' },
+    { short_name: 'ko-KR-SunHiNeural', friendly_name: 'SunHi', gender: 'Female', locale: 'ko-KR' },
+    { short_name: 'zh-CN-XiaoxiaoNeural', friendly_name: 'Xiaoxiao', gender: 'Female', locale: 'zh-CN' },
 ];
 
 class App {
@@ -1405,7 +1445,7 @@ class App {
         if (hint) {
             const hints = {
                 edge: 'Free, natural voices — no API key needed',
-                microsoft: 'Free — full Microsoft voice list (vi + en), sent to Microsoft',
+                microsoft: 'Free — full Microsoft Neural voice list (all languages), sent to Microsoft',
                 'google-free': 'Free — experimental, may stop working anytime. Text sent to Google',
                 tiktok: 'Free — needs a TikTok sessionid. Text sent to TikTok',
                 local: 'Free & 100% offline — download a voice below; nothing is sent anywhere',
@@ -1421,18 +1461,12 @@ class App {
     }
 
     /**
-     * Fetch Microsoft's vi+en voice list once (cached), then fill the voice dropdown
-     * filtered by the selected Language. The Language dropdown keeps the voice list short
-     * (Microsoft has ~50 English voices). Default language follows the saved voice's locale.
+     * Fetch Microsoft's Neural voice list once (cached), rebuild Language options
+     * from all locales, then fill the voice dropdown for the selected language.
      */
     async _populateMicrosoftVoices() {
         const langSel = document.getElementById('select-microsoft-lang');
         const saved = settingsManager.get().microsoft_v2_voice || 'vi-VN-HoaiMyNeural';
-        // Initialize the Language dropdown from the saved voice's locale (once).
-        if (langSel && !langSel.dataset.init) {
-            langSel.value = saved.startsWith('en') ? 'en' : 'vi';
-            langSel.dataset.init = 'true';
-        }
         if (!this._msVoices) {
             try {
                 const voices = await microsoftTTS.listVoices();
@@ -1442,15 +1476,48 @@ class App {
                 this._msVoices = MS_VOICE_FALLBACK;
             }
         }
+        this._rebuildMicrosoftLangOptions(saved);
         this._fillMicrosoftVoices(langSel ? langSel.value : 'vi');
     }
 
-    /** Fill #select-microsoft-voice with cached voices for `lang` ("vi"|"en"), restoring saved. */
+    /** Rebuild Language dropdown from unique locale prefixes in the voice cache. */
+    _rebuildMicrosoftLangOptions(savedVoice) {
+        const langSel = document.getElementById('select-microsoft-lang');
+        if (!langSel) return;
+        const voices = this._msVoices || MS_VOICE_FALLBACK;
+        const prefixes = [...new Set(
+            voices
+                .map(v => (v.locale || '').split('-')[0].toLowerCase())
+                .filter(Boolean)
+        )].sort((a, b) => {
+            const la = MS_LANG_LABELS[a] || a;
+            const lb = MS_LANG_LABELS[b] || b;
+            return la.localeCompare(lb);
+        });
+        const prev = langSel.value;
+        langSel.innerHTML = '';
+        for (const p of prefixes) {
+            const opt = document.createElement('option');
+            opt.value = p;
+            opt.textContent = MS_LANG_LABELS[p] || p.toUpperCase();
+            langSel.appendChild(opt);
+        }
+        const fromSaved = (savedVoice || '').match(/^([a-z]{2,3})/i)?.[1]?.toLowerCase();
+        if (fromSaved && prefixes.includes(fromSaved)) langSel.value = fromSaved;
+        else if (prev && prefixes.includes(prev)) langSel.value = prev;
+        else if (prefixes.includes('en')) langSel.value = 'en';
+        else if (prefixes.length) langSel.value = prefixes[0];
+    }
+
+    /** Fill #select-microsoft-voice with cached voices for `lang` prefix, restoring saved. */
     _fillMicrosoftVoices(lang) {
         const select = document.getElementById('select-microsoft-voice');
         if (!select) return;
         const saved = settingsManager.get().microsoft_v2_voice;
-        const list = (this._msVoices || MS_VOICE_FALLBACK).filter(v => (v.locale || '').startsWith(lang));
+        const prefix = (lang || 'vi').toLowerCase();
+        const list = (this._msVoices || MS_VOICE_FALLBACK).filter(v =>
+            (v.locale || '').toLowerCase().startsWith(prefix)
+        );
         select.innerHTML = '';
         for (const v of list) {
             const opt = document.createElement('option');
@@ -1469,10 +1536,6 @@ class App {
     async _populateLocalVoices() {
         const langSel = document.getElementById('select-local-lang');
         const saved = settingsManager.get().local_tts_voice || 'vi_VN-vais1000-medium';
-        if (langSel && !langSel.dataset.init) {
-            langSel.value = saved.startsWith('en') ? 'en' : 'vi';
-            langSel.dataset.init = 'true';
-        }
         // Show the real resolved models folder (per-OS absolute path) so the user can
         // find the files themselves. Falls back to the raw setting if the query fails.
         const dirInput = document.getElementById('input-local-models-dir');
@@ -1490,7 +1553,47 @@ class App {
         if (speedSlider) speedSlider.value = speed;
         if (speedLabel) speedLabel.textContent = parseFloat(speed).toFixed(1) + 'x';
         await this._refreshLocalVoices();
+        this._rebuildLocalLangOptions(saved);
         this._fillLocalVoices(langSel ? langSel.value : 'vi');
+    }
+
+    /** Rebuild Language dropdown from unique langs in the local catalog. */
+    _rebuildLocalLangOptions(savedVoice) {
+        const langSel = document.getElementById('select-local-lang');
+        if (!langSel) return;
+        const labels = {
+            vi: 'Vietnamese', en: 'English', ro: 'Romanian', fr: 'French', de: 'German',
+            es: 'Spanish', it: 'Italian', pt: 'Portuguese', pl: 'Polish', nl: 'Dutch',
+            cs: 'Czech', sk: 'Slovak', hu: 'Hungarian', el: 'Greek', sv: 'Swedish',
+            da: 'Danish', ru: 'Russian', uk: 'Ukrainian', tr: 'Turkish', zh: 'Chinese',
+            ar: 'Arabic', hi: 'Hindi', id: 'Indonesian',
+        };
+        const langs = [...new Set(
+            (this._localVoices || []).filter(v => !v.imported && v.lang).map(v => v.lang)
+        )].sort((a, b) => (labels[a] || a).localeCompare(labels[b] || b));
+        if (!langs.length) return;
+        const prev = langSel.value;
+        langSel.innerHTML = '';
+        for (const code of langs) {
+            const opt = document.createElement('option');
+            opt.value = code;
+            opt.textContent = labels[code] || code.toUpperCase();
+            langSel.appendChild(opt);
+        }
+        const fromSaved = this._localLangFromVoiceId(savedVoice);
+        if (fromSaved && langs.includes(fromSaved)) langSel.value = fromSaved;
+        else if (prev && langs.includes(prev)) langSel.value = prev;
+        else if (langs.includes('en')) langSel.value = 'en';
+        else langSel.value = langs[0];
+    }
+
+    _localLangFromVoiceId(id) {
+        if (!id) return 'vi';
+        const hit = (this._localVoices || []).find(v => v.id === id);
+        if (hit?.lang) return hit.lang;
+        if (id === 'adam1' || id === 'minhquang') return 'vi';
+        const m = id.match(/^([a-z]{2})_/i);
+        return m ? m[1].toLowerCase() : 'vi';
     }
 
     /** (Re)load the catalog + install state from the backend into a cache. */

@@ -30,8 +30,8 @@ struct VoiceOption {
     locale: String,
 }
 
-/// Fetch Microsoft voices filtered to Vietnamese + English. Returns JSON array (stringified).
-/// On network error returns Err so the frontend falls back to its static vi+en list.
+/// Fetch Microsoft voices (all locales). Returns JSON array (stringified).
+/// On network error returns Err so the frontend falls back to its static list.
 #[tauri::command]
 pub async fn microsoft_list_voices() -> Result<String, String> {
     let build_req = || http_client::shared().get(VOICES_LIST_URL).send();
@@ -56,9 +56,13 @@ pub async fn microsoft_list_voices() -> Result<String, String> {
     let voices: Vec<MsVoice> = serde_json::from_slice(&body)
         .map_err(|e| format!("Microsoft voices/list parse failed: {e}"))?;
 
+    // Prefer Neural voices (natural); keep MultilingualNeural too
     let filtered: Vec<VoiceOption> = voices
         .into_iter()
-        .filter(|v| v.locale.starts_with("vi") || v.locale.starts_with("en"))
+        .filter(|v| {
+            v.short_name.contains("Neural")
+                || v.short_name.contains("Multilingual")
+        })
         .map(|v| VoiceOption {
             short_name: v.short_name,
             friendly_name: v.friendly_name,
