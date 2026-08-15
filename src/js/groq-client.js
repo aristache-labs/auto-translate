@@ -7,6 +7,8 @@ import {
     getProviderInvoke,
     normalizeClientConfig,
     pcmToNumberArray,
+    isPcmSilent,
+    isSttHallucination,
 } from './provider-client.js';
 
 export class GroqClient {
@@ -54,6 +56,8 @@ export class GroqClient {
         this._isProcessing = true;
         const pcm = this._buffer.take();
         try {
+            // Skip silence — Whisper often hallucinates "Thank you." on quiet buffers
+            if (isPcmSilent(pcm)) return;
             const invoke = getProviderInvoke();
             const result = await invoke('groq_transcribe_and_translate', {
                 pcm: pcmToNumberArray(pcm),
@@ -75,12 +79,19 @@ export class GroqClient {
             }
         } finally {
             this._isProcessing = false;
+            if (this.isConnected && this._buffer.ready()) {
+                void this._processAudioBuffer();
+            }
         }
     }
 
     _emitResult(result) {
-        const source = (result?.source_text || result?.sourceText || '').trim();
-        const translated = (result?.translated_text || result?.translatedText || '').trim();
+        let source = (result?.source_text || result?.sourceText || '').trim();
+        let translated = (result?.translated_text || result?.translatedText || '').trim();
+        if (isSttHallucination(source)) {
+            source = '';
+            translated = '';
+        }
         if (!source && !translated) return;
         if (source) {
             this.onProvisional?.(source, null, this._config.sourceLanguage);

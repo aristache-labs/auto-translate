@@ -2,7 +2,23 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { GroqClient } from '../src/js/groq-client.js';
 import { CloudflareClient } from '../src/js/cloudflare-client.js';
-import { setProviderInvoke, normalizeClientConfig, PcmBuffer } from '../src/js/provider-client.js';
+import {
+    setProviderInvoke,
+    normalizeClientConfig,
+    PcmBuffer,
+    isPcmSilent,
+    isSttHallucination,
+} from '../src/js/provider-client.js';
+
+/** Loud s16le PCM so silence gate does not skip the buffer. */
+function loudPcm(bytes = 32000) {
+    const u8 = new Uint8Array(bytes);
+    const view = new DataView(u8.buffer);
+    for (let i = 0; i < bytes / 2; i++) {
+        view.setInt16(i * 2, 8000, true);
+    }
+    return u8;
+}
 
 test('normalizeClientConfig accepts sourceLang aliases', () => {
     const cfg = normalizeClientConfig({
@@ -14,6 +30,14 @@ test('normalizeClientConfig accepts sourceLang aliases', () => {
     });
     assert.equal(cfg.sourceLanguage, 'ja');
     assert.equal(cfg.targetLanguage, 'vi');
+});
+
+test('silence and hallucination helpers', () => {
+    assert.equal(isPcmSilent(new Uint8Array(32000)), true);
+    assert.equal(isPcmSilent(loudPcm(32000)), false);
+    assert.equal(isSttHallucination('Thank you.'), true);
+    assert.equal(isSttHallucination('Thanks for watching!'), true);
+    assert.equal(isSttHallucination('Hello everyone'), false);
 });
 
 test('Groq client invokes Rust with PCM and language contract', async () => {
@@ -35,7 +59,7 @@ test('Groq client invokes Rust with PCM and language contract', async () => {
         llmModel: 'llama-3.3-70b-versatile',
     });
     assert.equal(client.isConnected, true);
-    client._buffer.push(new Uint8Array(32000));
+    client._buffer.push(loudPcm(32000));
     await client._processAudioBuffer();
     assert.equal(calls.length, 1);
     assert.equal(calls[0].cmd, 'groq_transcribe_and_translate');
@@ -52,6 +76,36 @@ test('Groq client invokes Rust with PCM and language contract', async () => {
     assert.equal(typeof client._translateText, 'undefined');
 });
 
+test('Groq client skips silent buffers (no API call)', async () => {
+    const calls = [];
+    setProviderInvoke(async (cmd) => {
+        calls.push(cmd);
+        return { source_text: 'Thank you.', translated_text: 'Mulțumesc.' };
+    });
+    const client = new GroqClient();
+    const events = [];
+    client.onSegment = () => events.push('seg');
+    client.connect({ apiKey: 'k', sourceLanguage: 'en', targetLanguage: 'ro' });
+    client._buffer.push(new Uint8Array(32000));
+    await client._processAudioBuffer();
+    assert.equal(calls.length, 0);
+    assert.equal(events.length, 0);
+});
+
+test('Groq client drops Thank you hallucination', async () => {
+    setProviderInvoke(async () => ({
+        source_text: 'Thank you.',
+        translated_text: 'Mulțumesc.',
+    }));
+    const client = new GroqClient();
+    const events = [];
+    client.onSegment = () => events.push('seg');
+    client.connect({ apiKey: 'k', sourceLanguage: 'en', targetLanguage: 'ro' });
+    client._buffer.push(loudPcm(32000));
+    await client._processAudioBuffer();
+    assert.equal(events.length, 0);
+});
+
 test('Groq client fallback fires once on invoke failure', async () => {
     setProviderInvoke(async () => {
         throw new Error('provider down');
@@ -62,7 +116,7 @@ test('Groq client fallback fires once on invoke failure', async () => {
     client.onError = () => { errors += 1; };
     client.onFallback = () => { fallbacks += 1; };
     client.connect({ apiKey: 'k', sourceLanguage: 'en', targetLanguage: 'vi' });
-    client._buffer.push(new Uint8Array(8));
+    client._buffer.push(loudPcm(8));
     await client._processAudioBuffer();
     assert.equal(errors, 1);
     assert.equal(fallbacks, 1);
@@ -81,7 +135,7 @@ test('Cloudflare client invokes Rust command', async () => {
         sourceLanguage: 'en',
         targetLanguage: 'vi',
     });
-    client._buffer.push(new Uint8Array(4));
+    client._buffer.push(loudPcm(4));
     await client._processAudioBuffer();
     assert.equal(calls[0].cmd, 'cloudflare_transcribe_and_translate');
     assert.equal(calls[0].args.accountId, 'acct');
