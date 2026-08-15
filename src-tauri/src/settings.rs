@@ -59,6 +59,18 @@ pub struct Settings {
     /// OpenRouter chat model
     #[serde(default = "default_openrouter_llm_model")]
     pub openrouter_llm_model: String,
+    /// Whether Azure AI Translator Text is available in the translation chain.
+    #[serde(default)]
+    pub azure_translator_enabled: bool,
+    /// Azure Translator subscription key.
+    #[serde(default)]
+    pub azure_translator_key: String,
+    /// Azure resource region. Empty is valid for a single-service global resource.
+    #[serde(default)]
+    pub azure_translator_region: String,
+    /// Azure Translator base or full text-translation endpoint.
+    #[serde(default = "default_azure_translator_endpoint")]
+    pub azure_translator_endpoint: String,
     /// Source language: "auto" or ISO 639-1 code
     pub source_language: String,
     /// Target language: ISO 639-1 code
@@ -150,6 +162,10 @@ impl Default for Settings {
             llm_provider: default_llm_provider(),
             openrouter_api_key: String::new(),
             openrouter_llm_model: default_openrouter_llm_model(),
+            azure_translator_enabled: false,
+            azure_translator_key: String::new(),
+            azure_translator_region: String::new(),
+            azure_translator_endpoint: default_azure_translator_endpoint(),
             source_language: "auto".to_string(),
             target_language: "vi".to_string(),
             audio_source: "system".to_string(),
@@ -204,7 +220,7 @@ fn default_cloudflare_stt_model() -> String {
 }
 
 fn default_cloudflare_llm_model() -> String {
-    "@cf/meta/llama-3.1-8b-instruct".to_string()
+    "@cf/meta/llama-3.1-8b-instruct-fast".to_string()
 }
 
 fn default_llm_provider() -> String {
@@ -213,6 +229,10 @@ fn default_llm_provider() -> String {
 
 fn default_openrouter_llm_model() -> String {
     "openai/gpt-4o-mini".to_string()
+}
+
+fn default_azure_translator_endpoint() -> String {
+    "https://api.cognitive.microsofttranslator.com".to_string()
 }
 
 /// Get the settings file path

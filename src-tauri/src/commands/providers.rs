@@ -1,8 +1,9 @@
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
-use reqwest::multipart;
+use reqwest::{multipart, Url};
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
 use std::time::Duration;
+use uuid::Uuid;
 
 const SAMPLE_RATE: u32 = 16_000;
 const CHANNELS: u16 = 1;
@@ -16,11 +17,13 @@ const GROQ_STT_MODEL: &str = "whisper-large-v3-turbo";
 const GROQ_CHAT_MODEL: &str = "llama-3.1-8b-instant";
 
 const CF_WHISPER_MODEL: &str = "@cf/openai/whisper-large-v3-turbo";
-const CF_LLM_MODEL: &str = "@cf/meta/llama-3.1-8b-instruct";
+const CF_LLM_MODEL: &str = "@cf/meta/llama-3.1-8b-instruct-fast";
 const OPENROUTER_CHAT_URL: &str = "https://openrouter.ai/api/v1/chat/completions";
 const OPENROUTER_MODELS_URL: &str = "https://openrouter.ai/api/v1/models";
 const OPENROUTER_CHAT_MODEL: &str = "openai/gpt-4o-mini";
 const CF_TOKEN_VERIFY_URL: &str = "https://api.cloudflare.com/client/v4/user/tokens/verify";
+const GEMINI_DEFAULT_MODEL: &str = "gemini-3.1-flash-lite";
+const AZURE_TRANSLATOR_ENDPOINT: &str = "https://api.cognitive.microsofttranslator.com";
 
 fn cf_models_search_url(account_id: &str) -> String {
     format!(
@@ -100,11 +103,59 @@ fn language_hint(source_language: &str) -> Option<&str> {
     }
 }
 
-fn translation_prompt(source_language: &str, target_language: &str, text: &str) -> String {
+fn language_name(code: &str) -> String {
+    let lower = code.trim().to_ascii_lowercase();
+    match lower.as_str() {
+        "auto" | "" => "the source language".to_string(),
+        "en" => "English".to_string(),
+        "ro" => "Romanian".to_string(),
+        "vi" => "Vietnamese".to_string(),
+        "fr" => "French".to_string(),
+        "de" => "German".to_string(),
+        "es" => "Spanish".to_string(),
+        "it" => "Italian".to_string(),
+        "pt" | "pt-br" => "Portuguese".to_string(),
+        "ja" => "Japanese".to_string(),
+        "ko" => "Korean".to_string(),
+        "zh" | "zh-cn" => "Chinese (Simplified)".to_string(),
+        "zh-tw" => "Chinese (Traditional)".to_string(),
+        "ru" => "Russian".to_string(),
+        "ar" => "Arabic".to_string(),
+        "hi" => "Hindi".to_string(),
+        "th" => "Thai".to_string(),
+        "id" => "Indonesian".to_string(),
+        "tr" => "Turkish".to_string(),
+        "pl" => "Polish".to_string(),
+        "nl" => "Dutch".to_string(),
+        "uk" => "Ukrainian".to_string(),
+        "sq" => "Albanian".to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn translation_system_prompt(target_language: &str) -> String {
+    let target_name = language_name(target_language);
     format!(
-        "Translate the following text to {target}. If the source language is specified as {source}, use that. Return only the translation, with no quotes or explanation.\n\n{text}",
-        target = target_language,
-        source = source_language,
+        "You are a machine translator. Translate into {target_name} only. \
+         Output ONLY the translated text — no quotes, labels, markdown, or commentary. \
+         Never switch to another language."
+    )
+}
+
+fn translation_prompt(source_language: &str, target_language: &str, text: &str) -> String {
+    let source_name = language_name(source_language);
+    let target_name = language_name(target_language);
+    format!(
+        "Translate this text from {source_name} into {target_name}.\n\
+         Target language code: {target_code}\n\
+         Rules:\n\
+         - Write every word in {target_name} only\n\
+         - Do not invent a different target language\n\
+         - Keep meaning accurate; return only the translation\n\n\
+         Text:\n{text}",
+        source_name = source_name,
+        target_name = target_name,
+        target_code = target_language,
         text = text
     )
 }
@@ -112,8 +163,48 @@ fn translation_prompt(source_language: &str, target_language: &str, text: &str) 
 fn http_error_status(status: reqwest::StatusCode, body: &str) -> String {
     let code = status.as_u16();
     eprintln!("[provider] HTTP {code} {body}");
-    let snippet: String = body.chars().take(180).collect();
-    format!("HTTP {code} {snippet}")
+    // Prefer short actionable messages for the UI (never dump full JSON payloads)
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(body) {
+        if let Some(msg) = v
+            .pointer("/error/message")
+            .or_else(|| v.pointer("/errors/0/message"))
+            .and_then(|m| m.as_str())
+        {
+            let short: String = msg.chars().take(140).collect();
+            return match code {
+                429 => format!("Quota exhausted: {short}"),
+                401 | 403 => format!("Auth failed: {short}"),
+                410 => format!("Model unavailable: {short}"),
+                _ => format!("HTTP {code}: {short}"),
+            };
+        }
+    }
+    match code {
+        429 => "Quota exhausted (HTTP 429)".into(),
+        401 | 403 => "Authentication failed".into(),
+        410 => "Model deprecated or removed".into(),
+        _ => format!("HTTP {code}"),
+    }
+}
+
+fn resolve_cloudflare_llm(provided: Option<&str>) -> String {
+    let model = resolve_model(provided, CF_LLM_MODEL);
+    match model.as_str() {
+        // Deprecated / retired Workers AI models — force current default
+        "@cf/meta/llama-3-8b-instruct" | "@cf/meta/llama-3.1-8b-instruct" => {
+            CF_LLM_MODEL.to_string()
+        }
+        _ => model,
+    }
+}
+
+/// Groq chat models only — OpenRouter-style ids (vendor/model) are not valid on Groq.
+fn resolve_groq_llm(provided: Option<&str>) -> String {
+    let model = resolve_model(provided, GROQ_CHAT_MODEL);
+    if model.contains('/') {
+        return GROQ_CHAT_MODEL.to_string();
+    }
+    model
 }
 
 async fn groq_transcribe(
@@ -122,13 +213,15 @@ async fn groq_transcribe(
     source_language: &str,
     stt_model: &str,
 ) -> Result<String, String> {
-    let mut form = multipart::Form::new().text("model", stt_model.to_string()).part(
-        "file",
-        multipart::Part::bytes(wav)
-            .file_name("audio.wav")
-            .mime_str("audio/wav")
-            .map_err(|e| e.to_string())?,
-    );
+    let mut form = multipart::Form::new()
+        .text("model", stt_model.to_string())
+        .part(
+            "file",
+            multipart::Part::bytes(wav)
+                .file_name("audio.wav")
+                .mime_str("audio/wav")
+                .map_err(|e| e.to_string())?,
+        );
     if let Some(lang) = language_hint(source_language) {
         form = form.text("language", lang.to_string());
     }
@@ -172,7 +265,7 @@ async fn groq_translate(
         "model": llm_model,
         "temperature": 0.2,
         "messages": [
-            {"role": "system", "content": "You are a precise translator. Output only the translated text."},
+            {"role": "system", "content": translation_system_prompt(target_language)},
             {"role": "user", "content": translation_prompt(source_language, target_language, text)}
         ]
     });
@@ -255,7 +348,7 @@ async fn cloudflare_translate(
     }
     let payload = serde_json::json!({
         "messages": [
-            {"role": "system", "content": "You are a precise translator. Output only the translated text."},
+            {"role": "system", "content": translation_system_prompt(target_language)},
             {"role": "user", "content": translation_prompt(source_language, target_language, text)}
         ]
     });
@@ -301,7 +394,7 @@ async fn openrouter_translate(
         "temperature": 0.2,
         "stream": false,
         "messages": [
-            {"role": "system", "content": "You are a precise translator. Output only the translated text."},
+            {"role": "system", "content": translation_system_prompt(target_language)},
             {"role": "user", "content": translation_prompt(source_language, target_language, text)}
         ]
     });
@@ -328,6 +421,365 @@ async fn openrouter_translate(
         .to_string())
 }
 
+// Azure Translator — maps application language codes to Azure-supported codes
+fn map_language_to_azure(lang_code: &str) -> Option<String> {
+    match lang_code.to_lowercase().as_str() {
+        "auto" | "" => None,
+        "vi" => Some("vi".to_string()),
+        "en" => Some("en".to_string()),
+        "es" => Some("es".to_string()),
+        "fr" => Some("fr".to_string()),
+        "de" => Some("de".to_string()),
+        "zh" => Some("zh-Hans".to_string()),
+        "zh-cn" => Some("zh-Hans".to_string()),
+        "zh-tw" => Some("zh-Hant".to_string()),
+        "ja" => Some("ja".to_string()),
+        "ko" => Some("ko".to_string()),
+        "pt" => Some("pt-PT".to_string()),
+        "pt-br" => Some("pt-BR".to_string()),
+        "ru" => Some("ru".to_string()),
+        "ar" => Some("ar".to_string()),
+        "hi" => Some("hi".to_string()),
+        "th" => Some("th".to_string()),
+        "id" => Some("id".to_string()),
+        "tr" => Some("tr".to_string()),
+        "pl" => Some("pl".to_string()),
+        "nl" => Some("nl".to_string()),
+        "it" => Some("it".to_string()),
+        "sv" => Some("sv".to_string()),
+        "no" => Some("nb".to_string()),
+        "da" => Some("da".to_string()),
+        "fi" => Some("fi".to_string()),
+        "cs" => Some("cs".to_string()),
+        "uk" => Some("uk".to_string()),
+        "he" => Some("he".to_string()),
+        "fa" => Some("fa".to_string()),
+        "el" => Some("el".to_string()),
+        _ => Some(lang_code.to_string()), // Pass through unknown codes
+    }
+}
+
+fn azure_endpoint_allowed(host: &str) -> bool {
+    host == "api.cognitive.microsofttranslator.com"
+        || host.ends_with(".cognitive.microsofttranslator.com")
+        || host.ends_with(".cognitiveservices.azure.com")
+}
+
+fn azure_translate_url(
+    endpoint: &str,
+    source_language: Option<&str>,
+    target_language: &str,
+) -> Result<Url, String> {
+    let raw_endpoint = if endpoint.trim().is_empty() {
+        AZURE_TRANSLATOR_ENDPOINT
+    } else {
+        endpoint.trim()
+    };
+    let mut url = Url::parse(raw_endpoint)
+        .map_err(|_| "Azure Translator: Invalid endpoint URL".to_string())?;
+
+    if url.scheme() != "https" || !url.username().is_empty() || url.password().is_some() {
+        return Err("Azure Translator: Endpoint must be an HTTPS Azure URL".to_string());
+    }
+    let host = url
+        .host_str()
+        .ok_or_else(|| "Azure Translator: Endpoint host is missing".to_string())?;
+    if !azure_endpoint_allowed(host) {
+        return Err("Azure Translator: Endpoint is not an Azure Translator host".to_string());
+    }
+
+    let path = url.path().trim_end_matches('/');
+    if !path.ends_with("/translate") {
+        let translation_path = if path.is_empty() && host.ends_with(".cognitiveservices.azure.com")
+        {
+            "/translator/text/v3.0/translate".to_string()
+        } else {
+            format!("{path}/translate")
+        };
+        url.set_path(&translation_path);
+    }
+    url.set_query(None);
+    url.set_fragment(None);
+    {
+        let mut query = url.query_pairs_mut();
+        query.append_pair("api-version", "3.0");
+        query.append_pair("to", target_language);
+        if let Some(source) = source_language {
+            query.append_pair("from", source);
+        }
+    }
+    Ok(url)
+}
+
+fn azure_region_header(region: &str) -> Option<&str> {
+    let region = region.trim();
+    if region.is_empty() || region.eq_ignore_ascii_case("global") {
+        None
+    } else {
+        Some(region)
+    }
+}
+
+async fn azure_translate(
+    subscription_key: &str,
+    region: &str,
+    endpoint: &str,
+    source_language: &str,
+    target_language: &str,
+    text: &str,
+) -> Result<String, String> {
+    if text.is_empty() {
+        return Ok(String::new());
+    }
+    if source_language == target_language {
+        return Ok(text.to_string());
+    }
+
+    let target = map_language_to_azure(target_language)
+        .ok_or_else(|| format!("Azure: Unsupported target language: {}", target_language))?;
+
+    let source = map_language_to_azure(source_language);
+    let url = azure_translate_url(endpoint, source.as_deref(), &target)?;
+
+    let payload = serde_json::json!([{"text": text}]);
+
+    let mut request = http()
+        .post(url.as_str())
+        .header("Ocp-Apim-Subscription-Key", subscription_key)
+        .header("Content-Type", "application/json")
+        .header("X-ClientTraceId", Uuid::new_v4().to_string())
+        .json(&payload);
+    if let Some(region) = azure_region_header(region) {
+        request = request.header("Ocp-Apim-Subscription-Region", region);
+    }
+    let resp = request
+        .send()
+        .await
+        .map_err(|e| format!("Azure Translator request failed: {e}"))?;
+
+    let status = resp.status();
+    let body = resp.text().await.map_err(|e| e.to_string())?;
+
+    if !status.is_success() {
+        let code = status.as_u16();
+        match code {
+            401 | 403 => {
+                return Err(
+                    "Azure Translator: Authentication failed; check key, region, and endpoint"
+                        .to_string(),
+                )
+            }
+            429 => return Err("Azure Translator: Rate limit exceeded".to_string()),
+            500..=599 => return Err("Azure Translator: Service unavailable".to_string()),
+            _ => return Err(format!("Azure Translator error ({})", code)),
+        }
+    }
+
+    let parsed: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("Azure Translator JSON: {e}"))?;
+
+    let translated = parsed
+        .get(0)
+        .and_then(|v| v.pointer("/translations/0/text"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+
+    if translated.is_empty() {
+        return Err("Azure Translator: Empty response".to_string());
+    }
+
+    Ok(translated)
+}
+
+async fn gemini_translate(
+    api_key: &str,
+    source_language: &str,
+    target_language: &str,
+    text: &str,
+    model: &str,
+) -> Result<String, String> {
+    if text.is_empty() {
+        return Ok(String::new());
+    }
+    if source_language == target_language {
+        return Ok(text.to_string());
+    }
+
+    let system_prompt = translation_system_prompt(target_language);
+
+    let payload = serde_json::json!({
+        "contents": [{
+            "parts": [{"text": translation_prompt(source_language, target_language, text)}]
+        }],
+        "systemInstruction": {
+            "parts": [{"text": system_prompt}]
+        },
+        "generationConfig": {
+            "temperature": 0.1,
+            "topP": 0.95,
+            "maxOutputTokens": 1000
+        }
+    });
+
+    let model_id = if model.trim().is_empty() {
+        GEMINI_DEFAULT_MODEL
+    } else {
+        model.trim()
+    };
+    // Strip optional "models/" prefix if the user pasted a full resource name
+    let model_id = model_id.strip_prefix("models/").unwrap_or(model_id);
+    let key = api_key.trim();
+    // Build URL with percent-encoded key (raw query concat breaks on special chars)
+    let mut endpoint = Url::parse(&format!(
+        "https://generativelanguage.googleapis.com/v1beta/models/{model_id}:generateContent"
+    ))
+    .map_err(|e| format!("Gemini: Invalid model URL ({e})"))?;
+    endpoint.query_pairs_mut().append_pair("key", key);
+
+    let resp = http()
+        .post(endpoint.as_str())
+        .header("Content-Type", "application/json")
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| format!("Gemini request failed: {e}"))?;
+
+    let status = resp.status();
+    let body = resp.text().await.map_err(|e| e.to_string())?;
+
+    if !status.is_success() {
+        let code = status.as_u16();
+        let api_msg = serde_json::from_str::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|v| {
+                v.pointer("/error/message")
+                    .and_then(|m| m.as_str())
+                    .map(|s| s.chars().take(120).collect::<String>())
+            })
+            .unwrap_or_default();
+        match code {
+            401 | 403 => {
+                return Err(if api_msg.is_empty() {
+                    "Gemini: Invalid API key".to_string()
+                } else {
+                    format!("Gemini: {api_msg}")
+                });
+            }
+            404 => {
+                return Err(format!(
+                    "Gemini: Model '{model_id}' not found — try gemini-3.1-flash-lite or gemini-flash-lite-latest"
+                ));
+            }
+            429 => return Err("Gemini: Rate limit exceeded (quota exhausted)".to_string()),
+            500..=599 => return Err("Gemini: Service unavailable".to_string()),
+            400 => {
+                return Err(if api_msg.is_empty() {
+                    "Gemini: Invalid request".to_string()
+                } else {
+                    format!("Gemini: {api_msg}")
+                });
+            }
+            _ => {
+                return Err(if api_msg.is_empty() {
+                    format!("Gemini error ({code})")
+                } else {
+                    format!("Gemini: {api_msg}")
+                });
+            }
+        }
+    }
+
+    let parsed: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("Gemini JSON: {e}"))?;
+
+    let translated = parsed
+        .pointer("/candidates/0/content/parts/0/text")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+
+    if translated.is_empty() {
+        return Err("Gemini: Empty response".to_string());
+    }
+
+    Ok(translated)
+}
+
+async fn ollama_translate(
+    base_url: &str,
+    model_name: &str,
+    source_language: &str,
+    target_language: &str,
+    text: &str,
+) -> Result<String, String> {
+    if text.is_empty() {
+        return Ok(String::new());
+    }
+    if source_language == target_language {
+        return Ok(text.to_string());
+    }
+
+    if model_name.trim().is_empty() {
+        return Err("Ollama: Model name is required".to_string());
+    }
+
+    let prompt = format!(
+        "Translate the following text from {} to {}. Output ONLY the translated text, nothing else.\n\nText: {}\n\nTranslation:",
+        source_language, target_language, text
+    );
+
+    let url = format!("{}/api/generate", base_url.trim_end_matches('/'));
+
+    let payload = serde_json::json!({
+        "model": model_name,
+        "prompt": prompt,
+        "stream": false,
+        "temperature": 0.1
+    });
+
+    let resp = http()
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| format!("Ollama request failed: {e}"))?;
+
+    let status = resp.status();
+    let body = resp.text().await.map_err(|e| e.to_string())?;
+
+    if !status.is_success() {
+        let code = status.as_u16();
+        match code {
+            404 => return Err(format!("Ollama: Model '{}' not found", model_name)),
+            _ => return Err(format!("Ollama error ({})", code)),
+        }
+    }
+
+    let parsed: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("Ollama JSON: {e}"))?;
+
+    let translated = parsed
+        .get("response")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .lines()
+        .next() // Take first line only
+        .unwrap_or("")
+        .trim()
+        .to_string();
+
+    if translated.is_empty() {
+        return Err("Ollama: Empty response".to_string());
+    }
+
+    Ok(translated)
+}
+
 #[tauri::command]
 pub async fn groq_transcribe_and_translate(
     pcm: Vec<u8>,
@@ -347,25 +799,47 @@ pub async fn groq_transcribe_and_translate(
         return Err("Empty audio".into());
     }
     let stt = resolve_model(stt_model.as_deref(), GROQ_STT_MODEL);
-    let llm = resolve_model(llm_model.as_deref(), GROQ_CHAT_MODEL);
+    let llm = resolve_groq_llm(llm_model.as_deref());
     let wav = pcm_to_wav(&pcm);
     let source_text = groq_transcribe(&api_key, wav, &source_language, &stt).await?;
+    // Keep Groq STT; if OpenRouter fails (e.g. free-tier 429), fall back to Groq LLM
     let translated_text = if wants_openrouter(&llm_provider) {
         let or_key = openrouter_api_key.unwrap_or_default();
         if or_key.trim().is_empty() {
             return Err("OpenRouter API key is required".into());
         }
         let or_model = resolve_model(openrouter_model.as_deref(), OPENROUTER_CHAT_MODEL);
-        openrouter_translate(
+        match openrouter_translate(
             &or_key,
             &source_language,
             &target_language,
             &source_text,
             &or_model,
         )
-        .await?
+        .await
+        {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("[provider] OpenRouter failed, falling back to Groq LLM: {e}");
+                groq_translate(
+                    &api_key,
+                    &source_language,
+                    &target_language,
+                    &source_text,
+                    &llm,
+                )
+                .await?
+            }
+        }
     } else {
-        groq_translate(&api_key, &source_language, &target_language, &source_text, &llm).await?
+        groq_translate(
+            &api_key,
+            &source_language,
+            &target_language,
+            &source_text,
+            &llm,
+        )
+        .await?
     };
     Ok(ProviderResult {
         source_text,
@@ -393,24 +867,40 @@ pub async fn cloudflare_transcribe_and_translate(
         return Err("Empty audio".into());
     }
     let stt = resolve_model(stt_model.as_deref(), CF_WHISPER_MODEL);
-    let llm = resolve_model(llm_model.as_deref(), CF_LLM_MODEL);
+    let llm = resolve_cloudflare_llm(llm_model.as_deref());
     let wav = pcm_to_wav(&pcm);
     let source_text =
         cloudflare_transcribe(&account_id, &api_token, &wav, &source_language, &stt).await?;
+    // Keep CF STT; if OpenRouter fails, fall back to Cloudflare LLM (current model)
     let translated_text = if wants_openrouter(&llm_provider) {
         let or_key = openrouter_api_key.unwrap_or_default();
         if or_key.trim().is_empty() {
             return Err("OpenRouter API key is required".into());
         }
         let or_model = resolve_model(openrouter_model.as_deref(), OPENROUTER_CHAT_MODEL);
-        openrouter_translate(
+        match openrouter_translate(
             &or_key,
             &source_language,
             &target_language,
             &source_text,
             &or_model,
         )
-        .await?
+        .await
+        {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("[provider] OpenRouter failed, falling back to Cloudflare LLM: {e}");
+                cloudflare_translate(
+                    &account_id,
+                    &api_token,
+                    &source_language,
+                    &target_language,
+                    &source_text,
+                    &llm,
+                )
+                .await?
+            }
+        }
     } else {
         cloudflare_translate(
             &account_id,
@@ -481,6 +971,171 @@ pub async fn openrouter_ping(api_key: String) -> Result<bool, String> {
     Ok(resp.status().is_success())
 }
 
+#[tauri::command]
+pub async fn azure_translate_text(
+    subscription_key: String,
+    region: String,
+    endpoint: Option<String>,
+    source_language: String,
+    target_language: String,
+    text: String,
+) -> Result<ProviderResult, String> {
+    if subscription_key.trim().is_empty() {
+        return Err("Azure Translator subscription key is required".into());
+    }
+    if text.trim().is_empty() {
+        return Ok(ProviderResult {
+            source_text: String::new(),
+            translated_text: String::new(),
+        });
+    }
+
+    let translated_text = azure_translate(
+        &subscription_key,
+        &region,
+        endpoint.as_deref().unwrap_or(AZURE_TRANSLATOR_ENDPOINT),
+        &source_language,
+        &target_language,
+        &text,
+    )
+    .await?;
+
+    Ok(ProviderResult {
+        source_text: text,
+        translated_text,
+    })
+}
+
+#[tauri::command]
+pub async fn gemini_translate_text(
+    api_key: String,
+    source_language: String,
+    target_language: String,
+    text: String,
+    model: Option<String>,
+) -> Result<ProviderResult, String> {
+    if api_key.trim().is_empty() {
+        return Err("Gemini API key is required".into());
+    }
+    if text.trim().is_empty() {
+        return Ok(ProviderResult {
+            source_text: String::new(),
+            translated_text: String::new(),
+        });
+    }
+
+    let model_name = resolve_model(model.as_deref(), GEMINI_DEFAULT_MODEL);
+
+    let translated_text = gemini_translate(
+        &api_key,
+        &source_language,
+        &target_language,
+        &text,
+        &model_name,
+    )
+    .await?;
+
+    Ok(ProviderResult {
+        source_text: text,
+        translated_text,
+    })
+}
+
+#[tauri::command]
+pub async fn ollama_translate_text(
+    base_url: String,
+    model_name: String,
+    source_language: String,
+    target_language: String,
+    text: String,
+) -> Result<ProviderResult, String> {
+    if base_url.trim().is_empty() {
+        return Err("Ollama base URL is required".into());
+    }
+    if model_name.trim().is_empty() {
+        return Err("Ollama model name is required".into());
+    }
+    if text.trim().is_empty() {
+        return Ok(ProviderResult {
+            source_text: String::new(),
+            translated_text: String::new(),
+        });
+    }
+
+    let translated_text = ollama_translate(
+        &base_url,
+        &model_name,
+        &source_language,
+        &target_language,
+        &text,
+    )
+    .await?;
+
+    Ok(ProviderResult {
+        source_text: text,
+        translated_text,
+    })
+}
+
+#[tauri::command]
+pub async fn azure_translator_ping(
+    subscription_key: String,
+    region: String,
+    endpoint: Option<String>,
+) -> Result<bool, String> {
+    if subscription_key.trim().is_empty() {
+        return Err("Azure Translator subscription key is required".into());
+    }
+    // Must use different languages so the request actually hits Azure
+    azure_translate(
+        &subscription_key,
+        &region,
+        endpoint.as_deref().unwrap_or(AZURE_TRANSLATOR_ENDPOINT),
+        "en",
+        "vi",
+        "Hello",
+    )
+    .await?;
+    Ok(true)
+}
+
+#[tauri::command]
+pub async fn gemini_ping(api_key: String, model: Option<String>) -> Result<bool, String> {
+    if api_key.trim().is_empty() {
+        return Err("Gemini API key is required".into());
+    }
+
+    let model_name = resolve_model(model.as_deref(), GEMINI_DEFAULT_MODEL);
+    // Must use different languages so the request actually hits Gemini
+    gemini_translate(&api_key, "en", "vi", "Hello", &model_name).await?;
+    Ok(true)
+}
+
+#[tauri::command]
+pub async fn ollama_health_check(base_url: String) -> Result<serde_json::Value, String> {
+    if base_url.trim().is_empty() {
+        return Err("Ollama base URL is required".into());
+    }
+
+    let url = format!("{}/api/tags", base_url.trim_end_matches('/'));
+
+    let resp = http()
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("Ollama health check failed: {e}"))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("Ollama returned {}", resp.status().as_u16()));
+    }
+
+    let body = resp.text().await.map_err(|e| e.to_string())?;
+    let parsed: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("Ollama health check JSON: {e}"))?;
+
+    Ok(parsed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -539,5 +1194,67 @@ mod tests {
             resolve_model(Some("llama-3.3-70b-versatile"), "fallback"),
             "llama-3.3-70b-versatile"
         );
+    }
+
+    #[test]
+    fn map_language_to_azure_supports_common_codes() {
+        assert_eq!(map_language_to_azure("vi"), Some("vi".to_string()));
+        assert_eq!(map_language_to_azure("en"), Some("en".to_string()));
+        assert_eq!(map_language_to_azure("zh"), Some("zh-Hans".to_string()));
+        assert_eq!(map_language_to_azure("zh-tw"), Some("zh-Hant".to_string()));
+        assert_eq!(map_language_to_azure("pt-br"), Some("pt-BR".to_string()));
+    }
+
+    #[test]
+    fn map_language_to_azure_skips_auto() {
+        assert_eq!(map_language_to_azure("auto"), None);
+        assert_eq!(map_language_to_azure(""), None);
+    }
+
+    #[test]
+    fn map_language_to_azure_passes_through_unknown() {
+        assert_eq!(
+            map_language_to_azure("unknown"),
+            Some("unknown".to_string())
+        );
+    }
+
+    #[test]
+    fn azure_translate_url_builds_global_endpoint_query() {
+        let url = azure_translate_url(AZURE_TRANSLATOR_ENDPOINT, Some("en"), "ro").unwrap();
+        assert_eq!(url.path(), "/translate");
+        assert_eq!(
+            url.query_pairs()
+                .find(|(k, _)| k == "api-version")
+                .unwrap()
+                .1,
+            "3.0"
+        );
+        assert_eq!(
+            url.query_pairs().find(|(k, _)| k == "from").unwrap().1,
+            "en"
+        );
+        assert_eq!(url.query_pairs().find(|(k, _)| k == "to").unwrap().1, "ro");
+    }
+
+    #[test]
+    fn azure_translate_url_supports_custom_resource_root() {
+        let url =
+            azure_translate_url("https://example.cognitiveservices.azure.com", None, "fr").unwrap();
+        assert_eq!(url.path(), "/translator/text/v3.0/translate");
+        assert!(!url.query_pairs().any(|(k, _)| k == "from"));
+    }
+
+    #[test]
+    fn azure_translate_url_rejects_non_azure_hosts() {
+        let error = azure_translate_url("https://example.com", Some("en"), "ro").unwrap_err();
+        assert!(error.contains("not an Azure Translator host"));
+    }
+
+    #[test]
+    fn azure_region_is_optional_for_global_resources() {
+        assert_eq!(azure_region_header(""), None);
+        assert_eq!(azure_region_header("global"), None);
+        assert_eq!(azure_region_header(" eastus "), Some("eastus"));
     }
 }

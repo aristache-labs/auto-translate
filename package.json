@@ -12,7 +12,7 @@
     "build:dev": "node scripts/tauri-with-env.mjs build",
     "lint": "cd src-tauri && cargo clippy",
     "format": "cd src-tauri && cargo fmt",
-    "test": "node --test tests/mode-utils.test.js tests/html-ids.test.js tests/clients.test.js",
+    "test": "node --test tests/*.test.js",
     "check:js": "node scripts/check-js.mjs"
   },
   "devDependencies": {
@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "@tauri-apps/plugin-process": "^2.3.1",
-    "@tauri-apps/plugin-updater": "^2.10.0"
+    "@tauri-apps/plugin-updater": "^2.10.0",
+    "ws": "^8.21.3"
   }
 }

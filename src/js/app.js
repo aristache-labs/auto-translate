@@ -19,6 +19,17 @@ import { sessionStore } from './session-store.js';
 import { groqClient } from './groq-client.js';
 import { cloudflareClient } from './cloudflare-client.js';
 import {
+    sanitizeErrorMessage,
+    formatErrorNotification,
+    getEffectiveSTTChain,
+    getEffectiveTranslationChain,
+    isCircuitBreakerOpen,
+    resetCircuitBreaker,
+    clearSessionState,
+    logProviderTransition,
+} from './provider-orchestrator.js';
+import { ollamaTranslator } from './ollama-translator.js';
+import {
     migrateTranslationMode,
     engineClassFromMode,
     nextModeForEngineClass,
@@ -426,6 +437,38 @@ class App {
             const input = document.getElementById('input-cloudflare-token');
             if (input) input.type = input.type === 'password' ? 'text' : 'password';
         });
+        this._on('btn-toggle-azure-key', 'click', () => {
+            const input = document.getElementById('input-azure-key');
+            if (input) input.type = input.type === 'password' ? 'text' : 'password';
+        });
+        this._on('btn-toggle-gemini-key', 'click', () => {
+            const input = document.getElementById('input-gemini-key');
+            if (input) input.type = input.type === 'password' ? 'text' : 'password';
+        });
+        this._on('btn-test-azure', 'click', () => this._testConnection('azure'));
+        this._on('btn-test-gemini', 'click', () => this._testConnection('gemini'));
+        this._on('btn-test-ollama', 'click', () => this._testConnection('ollama'));
+        this._on('btn-reset-circuit-breaker', 'click', () => {
+            resetCircuitBreaker('openrouter');
+            resetCircuitBreaker('groq');
+            resetCircuitBreaker('cloudflare');
+            resetCircuitBreaker('azure');
+            resetCircuitBreaker('gemini');
+            resetCircuitBreaker('ollama');
+            this._showToast('Circuit breakers reset', 'success');
+            this._updateChainUI();
+        });
+
+        const refreshChainInputs = [
+            'input-openrouter-key', 'input-groq-key', 'input-cloudflare-account-id',
+            'input-cloudflare-token', 'input-azure-key', 'check-azure-enabled',
+            'input-gemini-key', 'check-gemini-enabled', 'input-ollama-model',
+            'check-ollama-enabled'
+        ];
+        refreshChainInputs.forEach(id => {
+            this._on(id, 'change', () => this._updateChainUI());
+            this._on(id, 'input', () => this._updateChainUI());
+        });
 
         this._on('link-groq', 'click', (e) => {
             e.preventDefault();
@@ -648,12 +691,21 @@ class App {
         client.onSegment = (sourceText, translatedText) => {
             sessionStore.addSegment(sourceText || '', translatedText || '');
         };
+        let lastToastTime = 0;
         client.onError = (error) => {
-            this._showToast(String(error), 'error');
+            const sanitized = sanitizeErrorMessage(error);
+            const now = Date.now();
+            // Suppress duplicate toasts per outage event within 5 seconds
+            if (now - lastToastTime > 5000) {
+                lastToastTime = now;
+                this._showToast(sanitized, 'error');
+            }
         };
         if (allowFallback) {
             client.onFallback = (reason) => {
-                this._showToast(`Switching to Cloudflare: ${reason}`, 'info');
+                const sanitizedReason = sanitizeErrorMessage(reason);
+                this._showToast(`Switching to Cloudflare: ${sanitizedReason}`, 'info');
+                logProviderTransition('Groq', 'Cloudflare', sanitizedReason);
                 this._transitionToCloudflare();
             };
         }
@@ -848,15 +900,42 @@ class App {
         const cfToken = document.getElementById('input-cloudflare-token');
         if (cfToken) cfToken.value = s.cloudflare_api_token || '';
         this._setSelectValue('select-groq-stt-model', s.groq_stt_model || 'whisper-large-v3-turbo');
-        this._setSelectValue('select-groq-llm-model', s.groq_llm_model || 'llama-3.1-8b-instant');
+        this._setSelectValue('select-groq-llm-model', s.groq_llm_model || 'openai/gpt-oss-20b');
         this._setSelectValue('select-cloudflare-stt-model', s.cloudflare_stt_model || '@cf/openai/whisper-large-v3-turbo');
-        this._setSelectValue('select-cloudflare-llm-model', s.cloudflare_llm_model || '@cf/meta/llama-3.1-8b-instruct');
+        this._setSelectValue('select-cloudflare-llm-model', s.cloudflare_llm_model || '@cf/meta/llama-3.1-8b-instruct-fast');
         const orKey = document.getElementById('input-openrouter-key');
         if (orKey) orKey.value = s.openrouter_api_key || '';
         this._setSelectValue('select-llm-provider', s.llm_provider || 'openrouter');
         const orModel = document.getElementById('input-openrouter-llm-model');
         if (orModel) orModel.value = s.openrouter_llm_model || 'openai/gpt-4o-mini';
+
+        // Azure Translator Text
+        const azEnabled = document.getElementById('check-azure-enabled');
+        if (azEnabled) azEnabled.checked = s.azure_translator_enabled || false;
+        const azKey = document.getElementById('input-azure-key');
+        if (azKey) azKey.value = s.azure_translator_key || '';
+        const azRegion = document.getElementById('input-azure-region');
+        if (azRegion) azRegion.value = s.azure_translator_region || '';
+        const azEndpoint = document.getElementById('input-azure-endpoint');
+        if (azEndpoint) azEndpoint.value = s.azure_translator_endpoint || 'https://api.cognitive.microsofttranslator.com';
+
+        // Gemini
+        const gemEnabled = document.getElementById('check-gemini-enabled');
+        if (gemEnabled) gemEnabled.checked = s.gemini_enabled || false;
+        const gemKey = document.getElementById('input-gemini-key');
+        if (gemKey) gemKey.value = s.gemini_api_key || '';
+        this._setSelectValue('select-gemini-model', s.gemini_model || 'gemini-3.1-flash-lite');
+
+        // Ollama
+        const olEnabled = document.getElementById('check-ollama-enabled');
+        if (olEnabled) olEnabled.checked = s.ollama_enabled || false;
+        const olUrl = document.getElementById('input-ollama-url');
+        if (olUrl) olUrl.value = s.ollama_base_url || 'http://127.0.0.1:11434';
+        const olModel = document.getElementById('input-ollama-model');
+        if (olModel) olModel.value = s.ollama_model || '';
+
         this._updateLlmProviderUI();
+        this._updateChainUI();
         document.getElementById('select-source-lang').value = s.source_language || 'auto';
         document.getElementById('select-target-lang').value = s.target_language || 'vi';
         const mode = migrateTranslationMode(s.translation_mode);
@@ -994,15 +1073,26 @@ class App {
         const settings = {
             groq_api_key: document.getElementById('input-groq-key')?.value.trim() || '',
             groq_stt_model: document.getElementById('select-groq-stt-model')?.value || 'whisper-large-v3-turbo',
-            groq_llm_model: document.getElementById('select-groq-llm-model')?.value || 'llama-3.1-8b-instant',
+            groq_llm_model: document.getElementById('select-groq-llm-model')?.value || 'openai/gpt-oss-20b',
             cloudflare_account_id: document.getElementById('input-cloudflare-account-id')?.value.trim() || '',
             cloudflare_api_token: document.getElementById('input-cloudflare-token')?.value.trim() || '',
             cloudflare_stt_model: document.getElementById('select-cloudflare-stt-model')?.value || '@cf/openai/whisper-large-v3-turbo',
-            cloudflare_llm_model: document.getElementById('select-cloudflare-llm-model')?.value || '@cf/meta/llama-3.1-8b-instruct',
+            cloudflare_llm_model: document.getElementById('select-cloudflare-llm-model')?.value || '@cf/meta/llama-3.1-8b-instruct-fast',
             llm_provider: document.getElementById('select-llm-provider')?.value || 'openrouter',
             openrouter_api_key: document.getElementById('input-openrouter-key')?.value.trim() || '',
             openrouter_llm_model: document.getElementById('input-openrouter-llm-model')?.value.trim() || 'openai/gpt-4o-mini',
+            azure_translator_enabled: document.getElementById('check-azure-enabled')?.checked || false,
+            azure_translator_key: document.getElementById('input-azure-key')?.value.trim() || '',
+            azure_translator_region: document.getElementById('input-azure-region')?.value.trim() || '',
+            azure_translator_endpoint: document.getElementById('input-azure-endpoint')?.value.trim() || 'https://api.cognitive.microsofttranslator.com',
+            gemini_enabled: document.getElementById('check-gemini-enabled')?.checked || false,
+            gemini_api_key: document.getElementById('input-gemini-key')?.value.trim() || '',
+            gemini_model: document.getElementById('select-gemini-model')?.value || 'gemini-3.1-flash-lite',
+            ollama_enabled: document.getElementById('check-ollama-enabled')?.checked || false,
+            ollama_base_url: document.getElementById('input-ollama-url')?.value.trim() || 'http://127.0.0.1:11434',
+            ollama_model: document.getElementById('input-ollama-model')?.value.trim() || '',
             source_language: document.getElementById('select-source-lang').value,
+            target_language: document.getElementById('select-target-lang').value,
             target_language: document.getElementById('select-target-lang').value,
             translation_mode: migrateTranslationMode(document.getElementById('select-translation-mode').value),
             translation_type: document.getElementById('select-translation-type')?.value || 'one_way',
@@ -2176,14 +2266,76 @@ class App {
                 const apiKey = document.getElementById('input-openrouter-key')?.value.trim() || '';
                 if (!apiKey) throw new Error('empty');
                 ok = await invoke('openrouter_ping', { apiKey });
+            } else if (provider === 'azure') {
+                const subscriptionKey = document.getElementById('input-azure-key')?.value.trim() || '';
+                const region = document.getElementById('input-azure-region')?.value.trim() || '';
+                const endpoint = document.getElementById('input-azure-endpoint')?.value.trim()
+                    || 'https://api.cognitive.microsofttranslator.com';
+                if (!subscriptionKey) throw new Error('empty');
+                // Use Rust backend — browser fetch hits CORS in Tauri webview
+                ok = await invoke('azure_translator_ping', { subscriptionKey, region, endpoint });
+            } else if (provider === 'gemini') {
+                const apiKey = document.getElementById('input-gemini-key')?.value.trim() || '';
+                const model = document.getElementById('select-gemini-model')?.value || 'gemini-3.1-flash-lite';
+                if (!apiKey) throw new Error('empty');
+                // Use Rust backend — browser fetch hits CORS in Tauri webview
+                ok = await invoke('gemini_ping', { apiKey, model });
+            } else if (provider === 'ollama') {
+                const baseUrl = document.getElementById('input-ollama-url')?.value.trim() || 'http://127.0.0.1:11434';
+                const modelName = document.getElementById('input-ollama-model')?.value.trim() || '';
+                if (!ollamaTranslator.isLoopbackUrl(baseUrl)) {
+                    throw new Error('loopback only');
+                }
+                const health = await invoke('ollama_health_check', { baseUrl });
+                const models = (health?.models || []).map((m) => m.name || m.model).filter(Boolean);
+                if (modelName && models.length && !models.includes(modelName)) {
+                    throw new Error(`model '${modelName}' not found`);
+                }
+                ok = true;
             }
             statusEl.className = 'key-status ' + (ok ? 'ok' : 'bad');
             statusEl.textContent = ok ? '✓ connected' : '✗ rejected';
         } catch (e) {
             statusEl.className = 'key-status bad';
-            statusEl.textContent = '✗ ' + (e?.message || 'failed');
+            const msg = String(e?.message || e || 'failed')
+                .replace(/^Gemini:\s*/i, '')
+                .replace(/^Azure Translator:\s*/i, '');
+            statusEl.textContent = '✗ ' + (msg.length > 48 ? msg.slice(0, 45) + '…' : msg);
+            statusEl.title = msg;
         } finally {
             btn.disabled = false;
+        }
+    }
+
+    _updateChainUI() {
+        const settings = settingsManager.get();
+        // Override settings with in-memory form values if present
+        const formSettings = {
+            ...settings,
+            openrouter_api_key: document.getElementById('input-openrouter-key')?.value.trim() || settings.openrouter_api_key,
+            groq_api_key: document.getElementById('input-groq-key')?.value.trim() || settings.groq_api_key,
+            groq_enabled: true,
+            cloudflare_account_id: document.getElementById('input-cloudflare-account-id')?.value.trim() || settings.cloudflare_account_id,
+            cloudflare_api_token: document.getElementById('input-cloudflare-token')?.value.trim() || settings.cloudflare_api_token,
+            cloudflare_enabled: true,
+            azure_translator_enabled: document.getElementById('check-azure-enabled')?.checked ?? settings.azure_translator_enabled,
+            azure_translator_key: document.getElementById('input-azure-key')?.value.trim() || settings.azure_translator_key,
+            gemini_enabled: document.getElementById('check-gemini-enabled')?.checked ?? settings.gemini_enabled,
+            gemini_api_key: document.getElementById('input-gemini-key')?.value.trim() || settings.gemini_api_key,
+            ollama_enabled: document.getElementById('check-ollama-enabled')?.checked ?? settings.ollama_enabled,
+            ollama_model: document.getElementById('input-ollama-model')?.value.trim() || settings.ollama_model,
+        };
+
+        const sttChain = getEffectiveSTTChain(formSettings);
+        const transChain = getEffectiveTranslationChain(formSettings, this.translationMode);
+
+        const sttEl = document.getElementById('chain-stt-display');
+        if (sttEl) {
+            sttEl.textContent = sttChain.length > 0 ? sttChain.join(' → ') : 'None configured';
+        }
+        const transEl = document.getElementById('chain-translation-display');
+        if (transEl) {
+            transEl.textContent = transChain.length > 0 ? transChain.join(' → ') : 'None configured';
         }
     }
 
@@ -2286,6 +2438,7 @@ class App {
         this.isRunning = false;
         this.isStarting = false;
         this._fallbackInFlight = false;
+        clearSessionState();
         this._setEnginePillLocked(false);
         this._updateStartButton();
         this._updateStatus('disconnected');

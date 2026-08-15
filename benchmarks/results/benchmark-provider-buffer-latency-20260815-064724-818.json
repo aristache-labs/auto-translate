@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 2,
+  "timestamp": "2026-08-15T06:47:24.818Z",
+  "benchmark": "provider-pcm-buffer-latency",
+  "note": "The old Soniox endpoint-delay sweep was replaced because current Groq/Cloudflare clients use a PCM buffer threshold.",
+  "config": {
+    "audioFile": "test_audio-16k.pcm",
+    "audioOffsetMs": 0,
+    "bufferWindowsMs": [
+      300,
+      1000,
+      3000
+    ],
+    "runs": 1,
+    "sourceLanguage": "ja",
+    "targetLanguage": "vi",
+    "timeoutMs": 45000,
+    "pauseMs": 2000,
+    "pipelines": [
+      {
+        "name": "cloudflare+engine",
+        "sttModel": "@cf/openai/whisper-large-v3-turbo",
+        "translationModel": "@cf/meta/llama-3.1-8b-instruct-fast"
+      }
+    ],
+    "skipped": []
+  },
+  "results": [
+    {
+      "pipeline": "cloudflare+engine",
+      "sttProvider": "cloudflare",
+      "translator": "engine",
+      "sttModel": "@cf/openai/whisper-large-v3-turbo",
+      "translationModel": "@cf/meta/llama-3.1-8b-instruct-fast",
+      "requestedBufferMs": 300,
+      "actualAudioMs": 300,
+      "run": 1,
+      "sttMs": 840.8,
+      "translationMs": 294.9,
+      "requestPipelineMs": 1135.7,
+      "estimatedFirstResultMs": 1435.7,
+      "sourceChars": 14,
+      "targetChars": 13
+    },
+    {
+      "pipeline": "cloudflare+engine",
+      "sttProvider": "cloudflare",
+      "translator": "engine",
+      "sttModel": "@cf/openai/whisper-large-v3-turbo",
+      "translationModel": "@cf/meta/llama-3.1-8b-instruct-fast",
+      "requestedBufferMs": 1000,
+      "actualAudioMs": 1000,
+      "run": 1,
+      "sttMs": 497.5,
+      "translationMs": 247.9,
+      "requestPipelineMs": 745.4,
+      "estimatedFirstResultMs": 1745.4,
+      "sourceChars": 14,
+      "targetChars": 26
+    },
+    {
+      "pipeline": "cloudflare+engine",
+      "sttProvider": "cloudflare",
+      "translator": "engine",
+      "sttModel": "@cf/openai/whisper-large-v3-turbo",
+      "translationModel": "@cf/meta/llama-3.1-8b-instruct-fast",
+      "requestedBufferMs": 3000,
+      "actualAudioMs": 3000,
+      "run": 1,
+      "sttMs": 1040.7,
+      "translationMs": 178.5,
+      "requestPipelineMs": 1219.2,
+      "estimatedFirstResultMs": 4219.2,
+      "sourceChars": 14,
+      "targetChars": 13
+    }
+  ]
+}

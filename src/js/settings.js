@@ -10,14 +10,17 @@ const { invoke } = window.__TAURI__.core;
 const DEFAULT_SETTINGS = {
   groq_api_key: '',
   groq_stt_model: 'whisper-large-v3-turbo',
-  groq_llm_model: 'llama-3.1-8b-instant',
+  groq_llm_model: 'openai/gpt-oss-20b',  // Updated: gpt-oss-20b via OpenRouter
+  groq_enabled: true,
   llm_provider: 'openrouter',
   openrouter_api_key: '',
   openrouter_llm_model: 'openai/gpt-4o-mini',
+  openrouter_enabled: true,
   cloudflare_account_id: '',
   cloudflare_api_token: '',
   cloudflare_stt_model: '@cf/openai/whisper-large-v3-turbo',
-  cloudflare_llm_model: '@cf/meta/llama-3.1-8b-instruct',
+  cloudflare_llm_model: '@cf/meta/llama-3.1-8b-instruct-fast',  // Updated: instruct-fast
+  cloudflare_enabled: true,
   source_language: 'auto',
   target_language: 'vi',
   audio_source: 'system',
@@ -27,6 +30,19 @@ const DEFAULT_SETTINGS = {
   show_original: true,
   translation_mode: 'groq',
   custom_context: null,
+  // Provider fallback settings
+  azure_translator_enabled: false,
+  azure_translator_key: '',
+  azure_translator_region: '',
+  azure_translator_endpoint: 'https://api.cognitive.microsofttranslator.com',
+  gemini_enabled: false,
+  gemini_api_key: '',
+  gemini_model: 'gemini-3.1-flash-lite',
+  ollama_enabled: false,
+  ollama_base_url: 'http://127.0.0.1:11434',
+  ollama_model: '',
+  local_stt_enabled: false,
+  // TTS settings
   elevenlabs_api_key: '',
   tts_enabled: false,
   tts_provider: 'edge',
@@ -60,21 +76,63 @@ class SettingsManager {
     this._listeners = [];
   }
 
-  /**
-   * Load settings from Rust backend
-   */
-  async load() {
-    try {
-      const settings = await invoke('get_settings');
-      this.settings = { ...DEFAULT_SETTINGS, ...settings };
-      this.settings.translation_mode = migrateTranslationMode(this.settings.translation_mode);
-    } catch (err) {
-      console.error('Failed to load settings:', err);
-      this.settings = { ...DEFAULT_SETTINGS };
-    }
-    this._notify();
-    return this.settings;
+/**
+ * Load settings from Rust backend
+ */
+async load() {
+  try {
+    const settings = await invoke('get_settings');
+    this.settings = { ...DEFAULT_SETTINGS, ...settings };
+    this.settings.translation_mode = migrateTranslationMode(this.settings.translation_mode);
+
+    // Migrate deprecated model defaults (preserve custom selections)
+    this.settings = this._migrateModelDefaults(this.settings);
+  } catch (err) {
+    console.error('Failed to load settings:', err);
+    this.settings = { ...DEFAULT_SETTINGS };
   }
+  this._notify();
+  return this.settings;
+}
+
+/**
+ * Migrate deprecated model defaults while preserving custom selections
+ * - Old Groq LLM: llama-3.1-8b-instant → openai/gpt-oss-20b (via OpenRouter)
+ * - Old Cloudflare LLM: llama-3 / llama-3.1 instruct → llama-3.1-8b-instruct-fast
+ */
+_migrateModelDefaults(settings) {
+  const DEPRECATED_GROQ_MODEL = 'llama-3.1-8b-instant';
+  const DEPRECATED_CF_MODELS = new Set([
+    '@cf/meta/llama-3-8b-instruct',
+    '@cf/meta/llama-3.1-8b-instruct',
+  ]);
+  const DEPRECATED_GEMINI_MODELS = new Set([
+    'gemini-2.0-flash',
+    'gemini-2.5-flash',
+    'gemini-1.5-flash',
+    'gemini-1.5-pro',
+  ]);
+
+  // Groq LLM migration
+  if (settings.groq_llm_model === DEPRECATED_GROQ_MODEL) {
+    settings.groq_llm_model = DEFAULT_SETTINGS.groq_llm_model;
+    console.debug('[Settings] Migrated deprecated Groq LLM model');
+  }
+
+  // Cloudflare LLM migration (retired Workers AI models → instruct-fast)
+  if (DEPRECATED_CF_MODELS.has(settings.cloudflare_llm_model)) {
+    settings.cloudflare_llm_model = DEFAULT_SETTINGS.cloudflare_llm_model;
+    console.debug('[Settings] Migrated deprecated Cloudflare LLM model');
+  }
+
+  // Gemini — retire models that 404 on current Google AI Studio catalogs
+  if (DEPRECATED_GEMINI_MODELS.has(settings.gemini_model)) {
+    settings.gemini_model = DEFAULT_SETTINGS.gemini_model;
+    console.debug('[Settings] Migrated deprecated Gemini model');
+  }
+
+  return settings;
+}
 
   /**
    * Save settings to Rust backend
