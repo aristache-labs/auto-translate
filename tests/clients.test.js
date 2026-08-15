@@ -1,0 +1,98 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { GroqClient } from '../src/js/groq-client.js';
+import { CloudflareClient } from '../src/js/cloudflare-client.js';
+import { setProviderInvoke, normalizeClientConfig, PcmBuffer } from '../src/js/provider-client.js';
+
+test('normalizeClientConfig accepts sourceLang aliases', () => {
+    const cfg = normalizeClientConfig({
+        apiKey: 'k',
+        sourceLang: 'ja',
+        targetLang: 'vi',
+        accountId: 'a',
+        apiToken: 't',
+    });
+    assert.equal(cfg.sourceLanguage, 'ja');
+    assert.equal(cfg.targetLanguage, 'vi');
+});
+
+test('Groq client invokes Rust with PCM and language contract', async () => {
+    const calls = [];
+    setProviderInvoke(async (cmd, args) => {
+        calls.push({ cmd, args });
+        return { source_text: 'hello', translated_text: 'xin chao' };
+    });
+    const client = new GroqClient();
+    const events = [];
+    client.onOriginal = (t) => events.push(['original', t]);
+    client.onTranslation = (t) => events.push(['translation', t]);
+    client.onSegment = (s, t) => events.push(['segment', s, t]);
+    client.connect({
+        apiKey: 'k',
+        sourceLanguage: 'en',
+        targetLanguage: 'vi',
+        sttModel: 'whisper-large-v3',
+        llmModel: 'llama-3.3-70b-versatile',
+    });
+    assert.equal(client.isConnected, true);
+    client._buffer.push(new Uint8Array(32000));
+    await client._processAudioBuffer();
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].cmd, 'groq_transcribe_and_translate');
+    assert.equal(calls[0].args.sourceLanguage, 'en');
+    assert.equal(calls[0].args.targetLanguage, 'vi');
+    assert.equal(calls[0].args.pcm.length, 32000);
+    assert.equal(calls[0].args.sttModel, 'whisper-large-v3');
+    assert.equal(calls[0].args.llmModel, 'llama-3.3-70b-versatile');
+    assert.deepEqual(events, [
+        ['original', 'hello'],
+        ['translation', 'xin chao'],
+        ['segment', 'hello', 'xin chao'],
+    ]);
+    assert.equal(typeof client._translateText, 'undefined');
+});
+
+test('Groq client fallback fires once on invoke failure', async () => {
+    setProviderInvoke(async () => {
+        throw new Error('provider down');
+    });
+    const client = new GroqClient();
+    let errors = 0;
+    let fallbacks = 0;
+    client.onError = () => { errors += 1; };
+    client.onFallback = () => { fallbacks += 1; };
+    client.connect({ apiKey: 'k', sourceLanguage: 'en', targetLanguage: 'vi' });
+    client._buffer.push(new Uint8Array(8));
+    await client._processAudioBuffer();
+    assert.equal(errors, 1);
+    assert.equal(fallbacks, 1);
+});
+
+test('Cloudflare client invokes Rust command', async () => {
+    const calls = [];
+    setProviderInvoke(async (cmd, args) => {
+        calls.push({ cmd, args });
+        return { source_text: 'hi', translated_text: 'chao' };
+    });
+    const client = new CloudflareClient();
+    client.connect({
+        accountId: 'acct',
+        apiToken: 'tok',
+        sourceLanguage: 'en',
+        targetLanguage: 'vi',
+    });
+    client._buffer.push(new Uint8Array(4));
+    await client._processAudioBuffer();
+    assert.equal(calls[0].cmd, 'cloudflare_transcribe_and_translate');
+    assert.equal(calls[0].args.accountId, 'acct');
+    assert.equal(typeof client._translateText, 'undefined');
+});
+
+test('PCM buffer concatenates chunks', () => {
+    const buf = new PcmBuffer(4);
+    buf.push(new Uint8Array([1, 2]));
+    buf.push(new Uint8Array([3, 4]));
+    assert.equal(buf.ready(), true);
+    assert.deepEqual(Array.from(buf.take()), [1, 2, 3, 4]);
+    assert.equal(buf.byteLength, 0);
+});

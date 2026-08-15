@@ -1,0 +1,25 @@
+{
+  "name": "my-translator",
+  "private": true,
+  "version": "0.9.1",
+  "type": "module",
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "node scripts/tauri-with-env.mjs dev",
+    "dev:default": "tauri dev",
+    "dev:web": "npx serve src -p 3111",
+    "build": "tauri build",
+    "build:dev": "node scripts/tauri-with-env.mjs build",
+    "lint": "cd src-tauri && cargo clippy",
+    "format": "cd src-tauri && cargo fmt",
+    "test": "node --test tests/mode-utils.test.js tests/html-ids.test.js tests/clients.test.js",
+    "check:js": "node scripts/check-js.mjs"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  },
+  "dependencies": {
+    "@tauri-apps/plugin-process": "^2.3.1",
+    "@tauri-apps/plugin-updater": "^2.10.0"
+  }
+}
