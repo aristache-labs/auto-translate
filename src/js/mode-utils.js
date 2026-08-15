@@ -1,6 +1,6 @@
 /** Shared engine/mode helpers — no DOM or Tauri imports. */
 
-export const SUPPORTED_MODES = ['groq', 'cloudflare', 'local'];
+export const SUPPORTED_MODES = ['automatic', 'assemblyai', 'groq', 'cloudflare', 'local'];
 export const LEGACY_MODES = ['soniox', 'openai', 'qwen', 'standard'];
 
 export const REQUIRED_INIT_IDS = [
@@ -14,6 +14,7 @@ export const REQUIRED_INIT_IDS = [
     'input-groq-key',
     'input-cloudflare-account-id',
     'input-cloudflare-token',
+    'input-assemblyai-key',
     'engine-pill',
 ];
 
@@ -29,6 +30,11 @@ export const SECRET_SETTING_KEYS = [
     'google_free_api_key',
     'tiktok_session_id',
     'openrouter_api_key',
+    'assemblyai_api_key',
+    'azure_translator_key',
+    'gemini_api_key',
+    'streaming_token',
+    'temporary_token',
 ];
 
 export function migrateTranslationMode(mode) {
@@ -38,11 +44,13 @@ export function migrateTranslationMode(mode) {
 
 export function engineClassFromMode(mode) {
     const normalized = migrateTranslationMode(mode);
+    if (normalized === 'automatic') return 'automatic';
+    if (normalized === 'assemblyai') return 'assemblyai';
     return normalized;
 }
 
 export function nextModeForEngineClass(klass, currentMode) {
-    if (klass === 'groq' || klass === 'cloudflare' || klass === 'local') return klass;
+    if (SUPPORTED_MODES.includes(klass)) return klass;
     return migrateTranslationMode(currentMode);
 }
 
@@ -58,6 +66,11 @@ export function redactSettings(settings) {
     const out = { ...settings };
     for (const key of SECRET_SETTING_KEYS) {
         if (key in out && out[key]) out[key] = '[redacted]';
+    }
+    for (const key of Object.keys(out)) {
+        if (/token|api_key|authorization|account_id|subscription_key/i.test(key) && out[key] && out[key] !== '[redacted]') {
+            out[key] = '[redacted]';
+        }
     }
     return out;
 }
@@ -102,9 +115,13 @@ export function clientConfigFromSettings(settings, mode = 'groq') {
         llmModel: isCf
             ? (settings.cloudflare_llm_model || '@cf/meta/llama-3.1-8b-instruct-fast')
             : (settings.groq_llm_model || 'llama-3.1-8b-instant'),
-        llmProvider: settings.llm_provider || 'openrouter',
+        llmProvider: settings.llm_provider || 'automatic',
         openrouterApiKey: settings.openrouter_api_key || '',
         openrouterModel: settings.openrouter_llm_model || 'openai/gpt-4o-mini',
+        assemblyaiApiKey: settings.assemblyai_api_key || '',
+        assemblyaiRegion: settings.assemblyai_region || 'eu',
+        assemblyaiModel: settings.assemblyai_streaming_model || 'universal-streaming-english',
+        assemblyaiSpeakerLabels: !!settings.assemblyai_speaker_labels,
     };
 }
 

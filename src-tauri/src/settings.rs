@@ -59,6 +59,26 @@ pub struct Settings {
     /// OpenRouter chat model
     #[serde(default = "default_openrouter_llm_model")]
     pub openrouter_llm_model: String,
+    /// Whether Groq is eligible in automatic provider chains.
+    #[serde(default = "default_true")]
+    pub groq_enabled: bool,
+    /// Whether Cloudflare Workers AI is eligible in automatic provider chains.
+    #[serde(default = "default_true")]
+    pub cloudflare_enabled: bool,
+    /// Whether OpenRouter is eligible in the translation chain.
+    #[serde(default = "default_true")]
+    pub openrouter_enabled: bool,
+    /// AssemblyAI Streaming STT.
+    #[serde(default = "default_true")]
+    pub assemblyai_enabled: bool,
+    #[serde(default)]
+    pub assemblyai_api_key: String,
+    #[serde(default = "default_assemblyai_region")]
+    pub assemblyai_region: String,
+    #[serde(default = "default_assemblyai_streaming_model")]
+    pub assemblyai_streaming_model: String,
+    #[serde(default)]
+    pub assemblyai_speaker_labels: bool,
     /// Whether Azure AI Translator Text is available in the translation chain.
     #[serde(default)]
     pub azure_translator_enabled: bool,
@@ -71,6 +91,23 @@ pub struct Settings {
     /// Azure Translator base or full text-translation endpoint.
     #[serde(default = "default_azure_translator_endpoint")]
     pub azure_translator_endpoint: String,
+    /// Google Gemini translation.
+    #[serde(default)]
+    pub gemini_enabled: bool,
+    #[serde(default)]
+    pub gemini_api_key: String,
+    #[serde(default = "default_gemini_model")]
+    pub gemini_model: String,
+    /// Local Ollama translation (loopback only).
+    #[serde(default)]
+    pub ollama_enabled: bool,
+    #[serde(default = "default_ollama_base_url")]
+    pub ollama_base_url: String,
+    #[serde(default)]
+    pub ollama_model: String,
+    /// Local MLX STT (Apple Silicon only).
+    #[serde(default)]
+    pub local_stt_enabled: bool,
     /// Source language: "auto" or ISO 639-1 code
     pub source_language: String,
     /// Target language: ISO 639-1 code
@@ -85,7 +122,7 @@ pub struct Settings {
     pub max_lines: u32,
     /// Whether to show original text alongside translation
     pub show_original: bool,
-    /// Translation mode: "groq" | "cloudflare" | "local"
+    /// STT engine / automatic chain: "automatic" | "assemblyai" | "groq" | "cloudflare" | "local"
     pub translation_mode: String,
     /// Optional custom context for better transcription
     pub custom_context: Option<CustomContext>,
@@ -160,12 +197,27 @@ impl Default for Settings {
             cloudflare_stt_model: default_cloudflare_stt_model(),
             cloudflare_llm_model: default_cloudflare_llm_model(),
             llm_provider: default_llm_provider(),
+            groq_enabled: true,
+            cloudflare_enabled: true,
+            openrouter_enabled: true,
+            assemblyai_enabled: true,
+            assemblyai_api_key: String::new(),
+            assemblyai_region: default_assemblyai_region(),
+            assemblyai_streaming_model: default_assemblyai_streaming_model(),
+            assemblyai_speaker_labels: false,
             openrouter_api_key: String::new(),
             openrouter_llm_model: default_openrouter_llm_model(),
             azure_translator_enabled: false,
             azure_translator_key: String::new(),
             azure_translator_region: String::new(),
             azure_translator_endpoint: default_azure_translator_endpoint(),
+            gemini_enabled: false,
+            gemini_api_key: String::new(),
+            gemini_model: default_gemini_model(),
+            ollama_enabled: false,
+            ollama_base_url: default_ollama_base_url(),
+            ollama_model: String::new(),
+            local_stt_enabled: false,
             source_language: "auto".to_string(),
             target_language: "vi".to_string(),
             audio_source: "system".to_string(),
@@ -235,6 +287,26 @@ fn default_azure_translator_endpoint() -> String {
     "https://api.cognitive.microsofttranslator.com".to_string()
 }
 
+fn default_true() -> bool {
+    true
+}
+
+fn default_assemblyai_region() -> String {
+    "eu".to_string()
+}
+
+fn default_assemblyai_streaming_model() -> String {
+    "universal-streaming-english".to_string()
+}
+
+fn default_gemini_model() -> String {
+    "gemini-3.1-flash-lite".to_string()
+}
+
+fn default_ollama_base_url() -> String {
+    "http://127.0.0.1:11434".to_string()
+}
+
 /// Get the settings file path
 /// ~/Library/Application Support/com.personal.translator/settings.json
 fn settings_path() -> PathBuf {
@@ -244,11 +316,11 @@ fn settings_path() -> PathBuf {
     path
 }
 
-/// Map legacy engine names onto the supported groq|cloudflare|local set.
+/// Map legacy engine names onto the supported STT set.
 /// Credentials are never copied across providers.
 pub fn normalize_translation_mode(mode: &str) -> String {
     match mode {
-        "groq" | "cloudflare" | "local" => mode.to_string(),
+        "automatic" | "assemblyai" | "groq" | "cloudflare" | "local" => mode.to_string(),
         "soniox" | "openai" | "qwen" | "standard" => "groq".to_string(),
         _ => "groq".to_string(),
     }
@@ -302,9 +374,22 @@ mod tests {
         assert_eq!(s.translation_mode, "groq");
         assert_eq!(s.groq_stt_model, "whisper-large-v3-turbo");
         assert_eq!(s.groq_llm_model, "llama-3.1-8b-instant");
-        assert_eq!(s.cloudflare_llm_model, "@cf/meta/llama-3.1-8b-instruct");
+        assert_eq!(
+            s.cloudflare_llm_model,
+            "@cf/meta/llama-3.1-8b-instruct-fast"
+        );
         assert_eq!(s.llm_provider, "openrouter");
         assert_eq!(s.openrouter_llm_model, "openai/gpt-4o-mini");
+        assert!(s.groq_enabled);
+        assert!(s.cloudflare_enabled);
+        assert!(s.openrouter_enabled);
+        assert!(s.assemblyai_enabled);
+        assert!(s.assemblyai_api_key.is_empty());
+        assert_eq!(s.assemblyai_region, "eu");
+        assert_eq!(s.assemblyai_streaming_model, "universal-streaming-english");
+        assert!(!s.gemini_enabled);
+        assert!(!s.ollama_enabled);
+        assert!(!s.local_stt_enabled);
         assert!(s.groq_api_key.is_empty());
         assert!(s.cloudflare_account_id.is_empty());
         assert!(s.cloudflare_api_token.is_empty());
@@ -354,6 +439,8 @@ mod tests {
         assert_eq!(normalize_translation_mode("standard"), "groq");
         assert_eq!(normalize_translation_mode("cloudflare"), "cloudflare");
         assert_eq!(normalize_translation_mode("local"), "local");
+        assert_eq!(normalize_translation_mode("automatic"), "automatic");
+        assert_eq!(normalize_translation_mode("assemblyai"), "assemblyai");
     }
 
     #[test]
@@ -372,5 +459,35 @@ mod tests {
         assert_eq!(back.translation_mode, "cloudflare");
         assert_eq!(back.target_language, "en");
         assert_eq!(back.tts_provider, "edge");
+    }
+
+    #[test]
+    fn assemblyai_and_translation_adapters_round_trip() {
+        let mut s = Settings::default();
+        s.assemblyai_api_key = "aai_test".into();
+        s.assemblyai_region = "us".into();
+        s.assemblyai_streaming_model = "whisper-rt".into();
+        s.assemblyai_speaker_labels = true;
+        s.gemini_enabled = true;
+        s.gemini_api_key = "gem_test".into();
+        s.gemini_model = "gemini-3.1-flash-lite".into();
+        s.ollama_enabled = true;
+        s.ollama_base_url = "http://127.0.0.1:11434".into();
+        s.ollama_model = "qwen2.5:7b".into();
+        s.local_stt_enabled = true;
+        s.translation_mode = "automatic".into();
+        let json = serde_json::to_string(&s).unwrap();
+        let back: Settings = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.assemblyai_api_key, "aai_test");
+        assert_eq!(back.assemblyai_region, "us");
+        assert_eq!(back.assemblyai_streaming_model, "whisper-rt");
+        assert!(back.assemblyai_speaker_labels);
+        assert!(back.gemini_enabled);
+        assert_eq!(back.gemini_api_key, "gem_test");
+        assert!(back.ollama_enabled);
+        assert_eq!(back.ollama_model, "qwen2.5:7b");
+        assert!(back.local_stt_enabled);
+        assert_eq!(back.translation_mode, "automatic");
+        assert!(!json.contains("Bearer "));
     }
 }

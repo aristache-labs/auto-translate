@@ -23,7 +23,27 @@ const OPENROUTER_MODELS_URL: &str = "https://openrouter.ai/api/v1/models";
 const OPENROUTER_CHAT_MODEL: &str = "openai/gpt-4o-mini";
 const CF_TOKEN_VERIFY_URL: &str = "https://api.cloudflare.com/client/v4/user/tokens/verify";
 const GEMINI_DEFAULT_MODEL: &str = "gemini-3.1-flash-lite";
+const GEMINI_MODELS_BASE: &str = "https://generativelanguage.googleapis.com/v1beta/models";
 const AZURE_TRANSLATOR_ENDPOINT: &str = "https://api.cognitive.microsofttranslator.com";
+
+fn gemini_model_id(model: &str) -> &str {
+    let trimmed = model.trim();
+    trimmed.strip_prefix("models/").unwrap_or(trimmed)
+}
+
+fn gemini_model_lookup_url(model: &str) -> String {
+    format!("{GEMINI_MODELS_BASE}/{}", gemini_model_id(model))
+}
+
+fn gemini_models_list_url() -> &'static str {
+    GEMINI_MODELS_BASE
+}
+
+fn gemini_url_with_key(base: &str, api_key: &str) -> Result<Url, String> {
+    let mut endpoint = Url::parse(base).map_err(|e| format!("Gemini: Invalid URL ({e})"))?;
+    endpoint.query_pairs_mut().append_pair("key", api_key.trim());
+    Ok(endpoint)
+}
 
 fn cf_models_search_url(account_id: &str) -> String {
     format!(
@@ -160,10 +180,48 @@ fn translation_prompt(source_language: &str, target_language: &str, text: &str) 
     )
 }
 
+fn error_kind_for_status(code: u16) -> &'static str {
+    match code {
+        429 => "quota",
+        408 | 500..=599 => "temporary",
+        400 | 401 | 403 => "config",
+        _ => "temporary",
+    }
+}
+
+fn retry_after_ms(headers: &reqwest::header::HeaderMap) -> Option<u64> {
+    let value = headers
+        .get("retry-after")
+        .or_else(|| headers.get("x-ratelimit-reset"))
+        .and_then(|v| v.to_str().ok())?;
+    if let Ok(seconds) = value.parse::<u64>() {
+        return Some(seconds.saturating_mul(1000));
+    }
+    None
+}
+
+fn provider_error_json(
+    provider: &str,
+    capability: &str,
+    status: reqwest::StatusCode,
+    message: &str,
+    retry_after_ms: Option<u64>,
+) -> String {
+    let code = status.as_u16();
+    serde_json::json!({
+        "provider": provider,
+        "capability": capability,
+        "kind": error_kind_for_status(code),
+        "status": code,
+        "retryAfterMs": retry_after_ms,
+        "message": message,
+    })
+    .to_string()
+}
+
 fn http_error_status(status: reqwest::StatusCode, body: &str) -> String {
     let code = status.as_u16();
-    eprintln!("[provider] HTTP {code} {body}");
-    // Prefer short actionable messages for the UI (never dump full JSON payloads)
+    eprintln!("[provider] HTTP {code}");
     if let Ok(v) = serde_json::from_str::<serde_json::Value>(body) {
         if let Some(msg) = v
             .pointer("/error/message")
@@ -626,17 +684,13 @@ async fn gemini_translate(
     let model_id = if model.trim().is_empty() {
         GEMINI_DEFAULT_MODEL
     } else {
-        model.trim()
+        gemini_model_id(model)
     };
-    // Strip optional "models/" prefix if the user pasted a full resource name
-    let model_id = model_id.strip_prefix("models/").unwrap_or(model_id);
     let key = api_key.trim();
-    // Build URL with percent-encoded key (raw query concat breaks on special chars)
-    let mut endpoint = Url::parse(&format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/{model_id}:generateContent"
-    ))
-    .map_err(|e| format!("Gemini: Invalid model URL ({e})"))?;
-    endpoint.query_pairs_mut().append_pair("key", key);
+    let endpoint = gemini_url_with_key(
+        &format!("{GEMINI_MODELS_BASE}/{model_id}:generateContent"),
+        key,
+    )?;
 
     let resp = http()
         .post(endpoint.as_str())
@@ -919,6 +973,283 @@ pub async fn cloudflare_transcribe_and_translate(
 }
 
 #[tauri::command]
+pub async fn groq_transcribe_only(
+    pcm: Vec<u8>,
+    source_language: String,
+    api_key: String,
+    stt_model: Option<String>,
+) -> Result<ProviderResult, String> {
+    if api_key.trim().is_empty() {
+        return Err(provider_error_json(
+            "groq",
+            "stt",
+            reqwest::StatusCode::UNAUTHORIZED,
+            "Groq API key is required",
+            None,
+        ));
+    }
+    if pcm.is_empty() {
+        return Err("Empty audio".into());
+    }
+    let stt = resolve_model(stt_model.as_deref(), GROQ_STT_MODEL);
+    let wav = pcm_to_wav(&pcm);
+    let source_text = groq_transcribe(&api_key, wav, &source_language, &stt)
+        .await
+        .map_err(|e| wrap_provider_error("groq", "stt", e))?;
+    Ok(ProviderResult {
+        source_text,
+        translated_text: String::new(),
+    })
+}
+
+#[tauri::command]
+pub async fn cloudflare_transcribe_only(
+    pcm: Vec<u8>,
+    source_language: String,
+    account_id: String,
+    api_token: String,
+    stt_model: Option<String>,
+) -> Result<ProviderResult, String> {
+    if account_id.trim().is_empty() || api_token.trim().is_empty() {
+        return Err(provider_error_json(
+            "cloudflare",
+            "stt",
+            reqwest::StatusCode::UNAUTHORIZED,
+            "Cloudflare account ID and API token are required",
+            None,
+        ));
+    }
+    if pcm.is_empty() {
+        return Err("Empty audio".into());
+    }
+    let stt = resolve_model(stt_model.as_deref(), CF_WHISPER_MODEL);
+    let wav = pcm_to_wav(&pcm);
+    let source_text = cloudflare_transcribe(&account_id, &api_token, &wav, &source_language, &stt)
+        .await
+        .map_err(|e| wrap_provider_error("cloudflare", "stt", e))?;
+    Ok(ProviderResult {
+        source_text,
+        translated_text: String::new(),
+    })
+}
+
+#[tauri::command]
+pub async fn groq_translate_text(
+    api_key: String,
+    source_language: String,
+    target_language: String,
+    text: String,
+    llm_model: Option<String>,
+) -> Result<ProviderResult, String> {
+    if api_key.trim().is_empty() {
+        return Err(provider_error_json(
+            "groq",
+            "translation",
+            reqwest::StatusCode::UNAUTHORIZED,
+            "Groq API key is required",
+            None,
+        ));
+    }
+    let llm = resolve_groq_llm(llm_model.as_deref());
+    let translated_text = groq_translate(&api_key, &source_language, &target_language, &text, &llm)
+        .await
+        .map_err(|e| wrap_provider_error("groq", "translation", e))?;
+    Ok(ProviderResult {
+        source_text: text,
+        translated_text,
+    })
+}
+
+#[tauri::command]
+pub async fn cloudflare_translate_text(
+    account_id: String,
+    api_token: String,
+    source_language: String,
+    target_language: String,
+    text: String,
+    llm_model: Option<String>,
+) -> Result<ProviderResult, String> {
+    if account_id.trim().is_empty() || api_token.trim().is_empty() {
+        return Err(provider_error_json(
+            "cloudflare",
+            "translation",
+            reqwest::StatusCode::UNAUTHORIZED,
+            "Cloudflare account ID and API token are required",
+            None,
+        ));
+    }
+    let llm = resolve_cloudflare_llm(llm_model.as_deref());
+    let translated_text = cloudflare_translate(
+        &account_id,
+        &api_token,
+        &source_language,
+        &target_language,
+        &text,
+        &llm,
+    )
+    .await
+    .map_err(|e| wrap_provider_error("cloudflare", "translation", e))?;
+    Ok(ProviderResult {
+        source_text: text,
+        translated_text,
+    })
+}
+
+#[tauri::command]
+pub async fn openrouter_translate_text(
+    api_key: String,
+    source_language: String,
+    target_language: String,
+    text: String,
+    llm_model: Option<String>,
+) -> Result<ProviderResult, String> {
+    if api_key.trim().is_empty() {
+        return Err(provider_error_json(
+            "openrouter",
+            "translation",
+            reqwest::StatusCode::UNAUTHORIZED,
+            "OpenRouter API key is required",
+            None,
+        ));
+    }
+    let model = resolve_model(llm_model.as_deref(), OPENROUTER_CHAT_MODEL);
+    let translated_text =
+        openrouter_translate(&api_key, &source_language, &target_language, &text, &model)
+            .await
+            .map_err(|e| wrap_provider_error("openrouter", "translation", e))?;
+    Ok(ProviderResult {
+        source_text: text,
+        translated_text,
+    })
+}
+
+fn wrap_provider_error(provider: &str, capability: &str, err: String) -> String {
+    if err.trim().starts_with('{') {
+        return err;
+    }
+    let code = err
+        .rsplit("HTTP ")
+        .next()
+        .and_then(|rest| rest.chars().take(3).collect::<String>().parse::<u16>().ok())
+        .or_else(|| {
+            ["429", "408", "401", "403", "400", "500", "502", "503"]
+                .iter()
+                .find(|s| err.contains(*s))
+                .and_then(|s| s.parse().ok())
+        })
+        .unwrap_or(500);
+    let status = reqwest::StatusCode::from_u16(code).unwrap_or(reqwest::StatusCode::INTERNAL_SERVER_ERROR);
+    provider_error_json(provider, capability, status, &err, None)
+}
+
+fn assemblyai_token_url(region: &str) -> &'static str {
+    match region.trim().to_ascii_lowercase().as_str() {
+        "us" => "https://streaming.us.assemblyai.com/v3/token",
+        "global" | "edge" => "https://streaming.assemblyai.com/v3/token",
+        _ => "https://streaming.eu.assemblyai.com/v3/token",
+    }
+}
+
+#[derive(Serialize)]
+pub struct AssemblyaiTokenResult {
+    pub token: String,
+}
+
+#[tauri::command]
+pub async fn assemblyai_streaming_token(
+    api_key: Option<String>,
+    region: Option<String>,
+    state: tauri::State<'_, crate::settings::SettingsState>,
+) -> Result<AssemblyaiTokenResult, String> {
+    let key = match api_key.filter(|k| !k.trim().is_empty()) {
+        Some(k) => k,
+        None => {
+            let settings = state
+                .0
+                .lock()
+                .map_err(|e| format!("Lock error: {e}"))?;
+            settings.assemblyai_api_key.clone()
+        }
+    };
+    if key.trim().is_empty() {
+        return Err(provider_error_json(
+            "assemblyai",
+            "stt",
+            reqwest::StatusCode::UNAUTHORIZED,
+            "AssemblyAI API key is required",
+            None,
+        ));
+    }
+    let region = region.unwrap_or_else(|| {
+        state
+            .0
+            .lock()
+            .ok()
+            .map(|s| s.assemblyai_region.clone())
+            .unwrap_or_else(|| "eu".into())
+    });
+    mint_assemblyai_token(&key, &region).await
+}
+
+async fn mint_assemblyai_token(api_key: &str, region: &str) -> Result<AssemblyaiTokenResult, String> {
+    let url = format!("{}?expires_in_seconds=60", assemblyai_token_url(region));
+    let resp = http()
+        .get(&url)
+        .header("Authorization", api_key.trim())
+        .send()
+        .await
+        .map_err(|e| {
+            provider_error_json(
+                "assemblyai",
+                "stt",
+                reqwest::StatusCode::REQUEST_TIMEOUT,
+                &format!("AssemblyAI token request failed: {e}"),
+                None,
+            )
+        })?;
+    let status = resp.status();
+    let retry = retry_after_ms(resp.headers());
+    let body = resp.text().await.map_err(|e| e.to_string())?;
+    if !status.is_success() {
+        let message = http_error_status(status, &body);
+        return Err(provider_error_json(
+            "assemblyai",
+            "stt",
+            status,
+            &message,
+            retry,
+        ));
+    }
+    let parsed: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("AssemblyAI token JSON: {e}"))?;
+    let token = parsed
+        .get("token")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if token.is_empty() {
+        return Err(provider_error_json(
+            "assemblyai",
+            "stt",
+            reqwest::StatusCode::BAD_GATEWAY,
+            "AssemblyAI token mint returned empty token",
+            None,
+        ));
+    }
+    Ok(AssemblyaiTokenResult { token })
+}
+
+#[tauri::command]
+pub async fn assemblyai_ping(api_key: String, region: Option<String>) -> Result<bool, String> {
+    if api_key.trim().is_empty() {
+        return Ok(false);
+    }
+    mint_assemblyai_token(&api_key, region.as_deref().unwrap_or("eu")).await?;
+    Ok(true)
+}
+
+#[tauri::command]
 pub async fn groq_ping(api_key: String) -> Result<bool, String> {
     if api_key.trim().is_empty() {
         return Ok(false);
@@ -1099,6 +1430,57 @@ pub async fn azure_translator_ping(
     Ok(true)
 }
 
+async fn gemini_get(url: Url) -> Result<(reqwest::StatusCode, String), String> {
+    let resp = http()
+        .get(url.as_str())
+        .send()
+        .await
+        .map_err(|_| "Gemini ping failed".to_string())?;
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    Ok((status, body))
+}
+
+fn gemini_error_message(status: reqwest::StatusCode, body: &str, model_id: &str) -> String {
+    let code = status.as_u16();
+    let api_msg = serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| {
+            v.pointer("/error/message")
+                .and_then(|m| m.as_str())
+                .map(|s| s.chars().take(120).collect::<String>())
+        })
+        .unwrap_or_default();
+    match code {
+        401 | 403 => {
+            if api_msg.is_empty() {
+                "Gemini: Invalid API key".into()
+            } else {
+                format!("Gemini: {api_msg}")
+            }
+        }
+        404 => format!(
+            "Gemini: Model '{model_id}' not found — try gemini-3.1-flash-lite or gemini-flash-lite-latest"
+        ),
+        429 => "Gemini: Rate limit exceeded (quota exhausted)".into(),
+        400 => {
+            if api_msg.is_empty() {
+                "Gemini: Invalid request".into()
+            } else {
+                format!("Gemini: {api_msg}")
+            }
+        }
+        500..=599 => "Gemini: Service unavailable".into(),
+        _ => {
+            if api_msg.is_empty() {
+                format!("Gemini error ({code})")
+            } else {
+                format!("Gemini: {api_msg}")
+            }
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn gemini_ping(api_key: String, model: Option<String>) -> Result<bool, String> {
     if api_key.trim().is_empty() {
@@ -1106,9 +1488,25 @@ pub async fn gemini_ping(api_key: String, model: Option<String>) -> Result<bool,
     }
 
     let model_name = resolve_model(model.as_deref(), GEMINI_DEFAULT_MODEL);
-    // Must use different languages so the request actually hits Gemini
-    gemini_translate(&api_key, "en", "vi", "Hello", &model_name).await?;
-    Ok(true)
+    let model_id = gemini_model_id(&model_name);
+    let lookup = gemini_url_with_key(&gemini_model_lookup_url(model_id), &api_key)?;
+    let (status, body) = gemini_get(lookup).await?;
+    if status.is_success() {
+        return Ok(true);
+    }
+    if status.as_u16() == 404 {
+        let list = gemini_url_with_key(gemini_models_list_url(), &api_key)?;
+        let (list_status, _) = gemini_get(list).await?;
+        if list_status.is_success() {
+            return Err(format!(
+                "Gemini: Model '{model_id}' not found — try gemini-flash-lite-latest"
+            ));
+        }
+        if list_status.as_u16() == 401 || list_status.as_u16() == 403 {
+            return Err("Gemini: Invalid API key".into());
+        }
+    }
+    Err(gemini_error_message(status, &body, model_id))
 }
 
 #[tauri::command]
@@ -1256,5 +1654,40 @@ mod tests {
         assert_eq!(azure_region_header(""), None);
         assert_eq!(azure_region_header("global"), None);
         assert_eq!(azure_region_header(" eastus "), Some("eastus"));
+    }
+
+    #[test]
+    fn gemini_ping_looks_up_model_without_generate_content() {
+        let url = gemini_model_lookup_url("models/gemini-3.1-flash-lite");
+        assert_eq!(
+            url,
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite"
+        );
+        assert!(!url.contains("generateContent"));
+        assert!(!url.contains("key="));
+        assert_eq!(
+            gemini_models_list_url(),
+            "https://generativelanguage.googleapis.com/v1beta/models"
+        );
+    }
+
+    #[test]
+    fn assemblyai_token_url_uses_region_hosts() {
+        assert!(assemblyai_token_url("eu").contains("streaming.eu.assemblyai.com"));
+        assert!(assemblyai_token_url("us").contains("streaming.us.assemblyai.com"));
+        assert_eq!(
+            assemblyai_token_url("global"),
+            "https://streaming.assemblyai.com/v3/token"
+        );
+        assert!(!assemblyai_token_url("eu").contains("token="));
+    }
+
+    #[test]
+    fn wrap_provider_error_keeps_json_and_redacts_status() {
+        let json = wrap_provider_error("groq", "stt", r#"{"kind":"quota","status":429}"#.into());
+        assert!(json.contains("quota"));
+        let wrapped = wrap_provider_error("groq", "stt", "HTTP 429".into());
+        assert!(wrapped.contains("\"status\":429"));
+        assert!(!wrapped.to_lowercase().contains("authorization"));
     }
 }

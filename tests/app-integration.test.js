@@ -48,8 +48,8 @@ test('effective STT chain filters disabled or unconfigured providers', () => {
         local_stt_enabled: true,
     };
 
-    const sttChain = getEffectiveSTTChain(settings);
-    assert.deepEqual(sttChain, ['groq', 'cloudflare', 'local']);
+    const sttChain = getEffectiveSTTChain(settings, { isAppleSilicon: true });
+    assert.deepEqual(sttChain, ['groq', 'cloudflare', 'local-stt']);
 
     const unconfigured = getEffectiveSTTChain({
         groq_enabled: false,
@@ -73,7 +73,10 @@ test('effective translation chain reflects active STT engine and enabled adapter
         ollama_model: 'qwen2.5:7b',
     };
 
-    const transChain = getEffectiveTranslationChain(settings, 'groq');
+    const transChain = getEffectiveTranslationChain({
+        ...settings,
+        groq_api_key: 'gsk_123',
+    }, 'groq');
     assert.deepEqual(transChain, ['openrouter', 'groq-llm', 'azure', 'gemini', 'ollama']);
 });
 

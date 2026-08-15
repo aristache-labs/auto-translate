@@ -1,5 +1,5 @@
 /**
- * Cloudflare Workers AI client — buffers PCM and invokes Rust STT+translate.
+ * Cloudflare Workers AI STT client — buffers PCM and invokes Rust transcription only.
  */
 
 import {
@@ -10,6 +10,7 @@ import {
     isPcmSilent,
     isSttHallucination,
 } from './provider-client.js';
+import { parseProviderError } from './provider-orchestrator.js';
 
 export class CloudflareClient {
     constructor() {
@@ -18,6 +19,8 @@ export class CloudflareClient {
         this._intentionalDisconnect = false;
         this._buffer = new PcmBuffer();
         this._isProcessing = false;
+        this._generation = 0;
+        this.providerId = 'cloudflare';
 
         this.onOriginal = null;
         this.onTranslation = null;
@@ -25,16 +28,21 @@ export class CloudflareClient {
         this.onSegment = null;
         this.onStatusChange = null;
         this.onError = null;
+        this.onFallback = null;
     }
 
     connect(config) {
         this._config = normalizeClientConfig(config);
         this._intentionalDisconnect = false;
+        this._generation += 1;
         this._buffer.clear();
 
         if (!this._config.accountId || !this._config.apiToken) {
             this._setStatus('error');
-            this.onError?.('Cloudflare Account ID and API Token are required. Please add them in Settings.');
+            this.onError?.(parseProviderError(
+                'Cloudflare Account ID and API Token are required. Please add them in Settings.',
+                { provider: 'cloudflare', capability: 'stt', status: 401 },
+            ));
             return;
         }
 
@@ -53,27 +61,25 @@ export class CloudflareClient {
     async _processAudioBuffer() {
         if (this._isProcessing || this._buffer.byteLength === 0) return;
         this._isProcessing = true;
+        const gen = this._generation;
         const pcm = this._buffer.take();
         try {
-            // Skip silence — Whisper often hallucinates "Thank you." on quiet buffers
             if (isPcmSilent(pcm)) return;
             const invoke = getProviderInvoke();
-            const result = await invoke('cloudflare_transcribe_and_translate', {
+            const result = await invoke('cloudflare_transcribe_only', {
                 pcm: pcmToNumberArray(pcm),
                 sourceLanguage: this._config.sourceLanguage,
-                targetLanguage: this._config.targetLanguage,
                 accountId: this._config.accountId,
                 apiToken: this._config.apiToken,
                 sttModel: this._config.sttModel || this._config.cloudflareSttModel || '',
-                llmModel: this._config.llmModel || this._config.cloudflareLlmModel || '',
-                llmProvider: this._config.llmProvider || 'engine',
-                openrouterApiKey: this._config.openrouterApiKey || '',
-                openrouterModel: this._config.openrouterModel || '',
             });
+            if (gen !== this._generation || this._intentionalDisconnect) return;
             this._emitResult(result);
         } catch (err) {
-            const message = err?.message || String(err);
-            this.onError?.(message);
+            if (gen !== this._generation || this._intentionalDisconnect) return;
+            const parsed = parseProviderError(err, { provider: 'cloudflare', capability: 'stt' });
+            this.onError?.(parsed);
+            if (!this._intentionalDisconnect) this.onFallback?.(parsed);
         } finally {
             this._isProcessing = false;
             if (this.isConnected && this._buffer.ready()) {
@@ -83,21 +89,10 @@ export class CloudflareClient {
     }
 
     _emitResult(result) {
-        let source = (result?.source_text || result?.sourceText || '').trim();
-        let translated = (result?.translated_text || result?.translatedText || '').trim();
-        if (isSttHallucination(source)) {
-            source = '';
-            translated = '';
-        }
-        if (!source && !translated) return;
-        if (source) {
-            this.onProvisional?.(source, null, this._config.sourceLanguage);
-            this.onOriginal?.(source, null, this._config.sourceLanguage);
-        }
-        if (translated) {
-            this.onTranslation?.(translated);
-        }
-        this.onSegment?.(source, translated || source);
+        const source = (result?.source_text || result?.sourceText || '').trim();
+        if (isSttHallucination(source) || !source) return;
+        this.onProvisional?.(source, null, this._config.sourceLanguage);
+        this.onOriginal?.(source, null, this._config.sourceLanguage);
     }
 
     flushPending() {
@@ -108,6 +103,7 @@ export class CloudflareClient {
 
     async disconnect() {
         this._intentionalDisconnect = true;
+        this._generation += 1;
         this.isConnected = false;
         this.flushPending();
         this._setStatus('disconnected');

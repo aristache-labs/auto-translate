@@ -21,6 +21,8 @@ test('legacy modes migrate to groq without inventing credentials', () => {
     assert.equal(migrateTranslationMode('cloudflare'), 'cloudflare');
     assert.equal(migrateTranslationMode('local'), 'local');
     assert.equal(migrateTranslationMode('groq'), 'groq');
+    assert.equal(migrateTranslationMode('automatic'), 'automatic');
+    assert.equal(migrateTranslationMode('assemblyai'), 'assemblyai');
 });
 
 test('engine class maps 1:1 with groq|cloudflare|local', () => {
@@ -48,14 +50,19 @@ test('secret fields are redacted in logs', () => {
         groq_api_key: 'gsk_secret',
         cloudflare_api_token: 'tok',
         cloudflare_account_id: 'acct',
+        assemblyai_api_key: 'aai_secret',
+        streaming_token: 'tmp_token_secret',
         translation_mode: 'groq',
         target_language: 'vi',
     });
     assert.equal(redacted.groq_api_key, '[redacted]');
     assert.equal(redacted.cloudflare_api_token, '[redacted]');
     assert.equal(redacted.cloudflare_account_id, '[redacted]');
+    assert.equal(redacted.assemblyai_api_key, '[redacted]');
+    assert.equal(redacted.streaming_token, '[redacted]');
     assert.equal(redacted.translation_mode, 'groq');
     assert.equal(JSON.stringify(redacted).includes('gsk_secret'), false);
+    assert.equal(JSON.stringify(redacted).includes('tmp_token_secret'), false);
 });
 
 test('start failure restores stopped flags', () => {

@@ -12,7 +12,7 @@ const DEFAULT_SETTINGS = {
   groq_stt_model: 'whisper-large-v3-turbo',
   groq_llm_model: 'openai/gpt-oss-20b',  // Updated: gpt-oss-20b via OpenRouter
   groq_enabled: true,
-  llm_provider: 'openrouter',
+  llm_provider: 'automatic',
   openrouter_api_key: '',
   openrouter_llm_model: 'openai/gpt-4o-mini',
   openrouter_enabled: true,
@@ -21,6 +21,11 @@ const DEFAULT_SETTINGS = {
   cloudflare_stt_model: '@cf/openai/whisper-large-v3-turbo',
   cloudflare_llm_model: '@cf/meta/llama-3.1-8b-instruct-fast',  // Updated: instruct-fast
   cloudflare_enabled: true,
+  assemblyai_enabled: true,
+  assemblyai_api_key: '',
+  assemblyai_region: 'eu',
+  assemblyai_streaming_model: 'universal-streaming-english',
+  assemblyai_speaker_labels: false,
   source_language: 'auto',
   target_language: 'vi',
   audio_source: 'system',
@@ -28,7 +33,7 @@ const DEFAULT_SETTINGS = {
   font_size: 16,
   max_lines: 5,
   show_original: true,
-  translation_mode: 'groq',
+  translation_mode: 'automatic',
   custom_context: null,
   // Provider fallback settings
   azure_translator_enabled: false,

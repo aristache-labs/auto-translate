@@ -6,6 +6,8 @@
  * Never logs or exposes API keys
  */
 
+import { getProviderInvoke } from './provider-client.js';
+
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 
 // Conservative supported default model
@@ -163,16 +165,19 @@ export async function testGeminiConnection(apiKey, model = DEFAULT_MODEL) {
   }
 
   try {
-    const result = await geminiTranslate(
-      apiKey,
-      'en',
-      'vi',
-      'Hello',
-      model
-    );
-    return { ok: true, result };
+    const invoke = getProviderInvoke();
+    const ok = await invoke('gemini_ping', {
+      apiKey: apiKey.trim(),
+      model: model || DEFAULT_MODEL,
+    });
+    return ok
+      ? { ok: true }
+      : { ok: false, error: 'Gemini rejected the credentials' };
   } catch (err) {
-    return { ok: false, error: err.message };
+    return {
+      ok: false,
+      error: typeof err === 'string' ? err : err?.message || 'Gemini test failed',
+    };
   }
 }
 

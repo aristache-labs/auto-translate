@@ -18,15 +18,30 @@ import { updater } from './updater.js';
 import { sessionStore } from './session-store.js';
 import { groqClient } from './groq-client.js';
 import { cloudflareClient } from './cloudflare-client.js';
+import { assemblyaiClient } from './assemblyai-client.js';
 import {
     sanitizeErrorMessage,
-    formatErrorNotification,
     getEffectiveSTTChain,
     getEffectiveTranslationChain,
+    getSttStartOrder,
+    nextSttProvider,
+    preferredRecoveryStt,
+    canTransitionStt,
+    markSttTransition,
     isCircuitBreakerOpen,
-    resetCircuitBreaker,
+    resetAllCircuitBreakers,
     clearSessionState,
     logProviderTransition,
+    parseProviderError,
+    applyProviderError,
+    translateWithChain,
+    allocateSegmentId,
+    getCircuitBreakerStatuses,
+    breakerKey,
+    noteHalfOpenProbe,
+    noteProviderSuccess,
+    isCircuitBreakerHalfOpen,
+    ERROR_TYPES,
 } from './provider-orchestrator.js';
 import { ollamaTranslator } from './ollama-translator.js';
 import {
@@ -100,9 +115,16 @@ class App {
         this.isRunning = false;
         this.isStarting = false; // Guard against re-entry
         this.currentSource = 'system'; // 'system' | 'microphone' | 'both'
-        this.translationMode = 'groq';
+        this.translationMode = 'automatic';
         this.groqClient = groqClient;
         this.cloudflareClient = cloudflareClient;
+        this.assemblyaiClient = assemblyaiClient;
+        this.activeSttProvider = null;
+        this.activeSttClient = null;
+        this._sttGeneration = 0;
+        this._captureStarted = false;
+        this._handoffBuffer = [];
+        this._translationJobs = new Map();
         this._fallbackInFlight = false;
         this.transcriptUI = null;
         this.appWindow = getCurrentWindow();
@@ -461,6 +483,10 @@ class App {
             }
         });
 
+        this._on('btn-toggle-assemblyai-key', 'click', () => {
+            const input = document.getElementById('input-assemblyai-key');
+            if (input) input.type = input.type === 'password' ? 'text' : 'password';
+        });
         this._on('btn-toggle-groq-key', 'click', () => {
             const input = document.getElementById('input-groq-key');
             if (input) input.type = input.type === 'password' ? 'text' : 'password';
@@ -495,13 +521,9 @@ class App {
         this._on('btn-test-azure', 'click', () => this._testConnection('azure'));
         this._on('btn-test-gemini', 'click', () => this._testConnection('gemini'));
         this._on('btn-test-ollama', 'click', () => this._testConnection('ollama'));
+        this._on('btn-test-assemblyai', 'click', () => this._testConnection('assemblyai'));
         this._on('btn-reset-circuit-breaker', 'click', () => {
-            resetCircuitBreaker('openrouter');
-            resetCircuitBreaker('groq');
-            resetCircuitBreaker('cloudflare');
-            resetCircuitBreaker('azure');
-            resetCircuitBreaker('gemini');
-            resetCircuitBreaker('ollama');
+            resetAllCircuitBreakers();
             this._showToast('Circuit breakers reset', 'success');
             this._updateChainUI();
         });
@@ -510,7 +532,8 @@ class App {
             'input-openrouter-key', 'input-groq-key', 'input-cloudflare-account-id',
             'input-cloudflare-token', 'input-azure-key', 'check-azure-enabled',
             'input-gemini-key', 'check-gemini-enabled', 'input-ollama-model',
-            'check-ollama-enabled'
+            'check-ollama-enabled', 'input-assemblyai-key', 'check-assemblyai-enabled',
+            'select-translation-mode', 'select-llm-provider'
         ];
         refreshChainInputs.forEach(id => {
             this._on(id, 'change', () => this._updateChainUI());
@@ -535,6 +558,7 @@ class App {
         this._on('input-cloudflare-token', 'input', () => this._refreshKeyStatus());
         this._on('btn-test-groq', 'click', () => this._testConnection('groq'));
         this._on('btn-test-cloudflare', 'click', () => this._testConnection('cloudflare'));
+        this._on('input-assemblyai-key', 'input', () => this._refreshKeyStatus());
 
         document.getElementById('select-translation-mode').addEventListener('change', (e) => {
             this._updateModeUI(e.target.value);
@@ -717,45 +741,41 @@ class App {
     }
 
     _bindProviderClients() {
-        this._wireProviderClient(this.groqClient, { allowFallback: true });
-        this._wireProviderClient(this.cloudflareClient, { allowFallback: false });
+        this._wireProviderClient(this.groqClient);
+        this._wireProviderClient(this.cloudflareClient);
+        this._wireProviderClient(this.assemblyaiClient);
     }
 
-    _wireProviderClient(client, { allowFallback = false } = {}) {
+    _wireProviderClient(client) {
         if (!client) return;
         client.onStatusChange = (status) => this._updateStatus(status);
         client.onProvisional = (text, speaker, language) => {
+            if (client !== this.activeSttClient) return;
             if (text) this.transcriptUI.setProvisional(text, speaker, language);
             else this.transcriptUI.clearProvisional();
         };
         client.onOriginal = (text, speaker, language) => {
-            this.transcriptUI.addOriginal(text, speaker, language);
+            if (client !== this.activeSttClient) return;
+            this._commitSourceTurn(text, speaker, language);
         };
-        client.onTranslation = (text) => {
-            this.transcriptUI.addTranslation(text);
-            this._speakIfEnabled(text);
-        };
-        client.onSegment = (sourceText, translatedText) => {
-            sessionStore.addSegment(sourceText || '', translatedText || '');
-        };
-        let lastToastTime = 0;
         client.onError = (error) => {
-            const sanitized = sanitizeErrorMessage(error);
-            const now = Date.now();
-            // Suppress duplicate toasts per outage event within 5 seconds
-            if (now - lastToastTime > 5000) {
-                lastToastTime = now;
+            const parsed = parseProviderError(error, {
+                provider: client.providerId,
+                capability: 'stt',
+            });
+            const sanitized = parsed.message || sanitizeErrorMessage(error);
+            if (!this._lastErrorToastAt || Date.now() - this._lastErrorToastAt > 5000) {
+                this._lastErrorToastAt = Date.now();
                 this._showToast(sanitized, 'error');
             }
         };
-        if (allowFallback) {
-            client.onFallback = (reason) => {
-                const sanitizedReason = sanitizeErrorMessage(reason);
-                this._showToast(`Switching to Cloudflare: ${sanitizedReason}`, 'info');
-                logProviderTransition('Groq', 'Cloudflare', sanitizedReason);
-                this._transitionToCloudflare();
-            };
-        }
+        client.onFallback = (reason) => {
+            if (client !== this.activeSttClient) return;
+            this._failoverStt(parseProviderError(reason, {
+                provider: client.providerId,
+                capability: 'stt',
+            }));
+        };
     }
 
     _bindSettingsForm() {
@@ -981,6 +1001,15 @@ class App {
         const olModel = document.getElementById('input-ollama-model');
         if (olModel) olModel.value = s.ollama_model || '';
 
+        const aaiEnabled = document.getElementById('check-assemblyai-enabled');
+        if (aaiEnabled) aaiEnabled.checked = s.assemblyai_enabled !== false;
+        const aaiKey = document.getElementById('input-assemblyai-key');
+        if (aaiKey) aaiKey.value = s.assemblyai_api_key || '';
+        this._setSelectValue('select-assemblyai-region', s.assemblyai_region || 'eu');
+        this._setSelectValue('select-assemblyai-model', s.assemblyai_streaming_model || 'universal-streaming-english');
+        const aaiSpeakers = document.getElementById('check-assemblyai-speaker-labels');
+        if (aaiSpeakers) aaiSpeakers.checked = !!s.assemblyai_speaker_labels;
+
         this._updateLlmProviderUI();
         this._updateChainUI();
         document.getElementById('select-source-lang').value = s.source_language || 'auto';
@@ -1138,8 +1167,12 @@ class App {
             ollama_enabled: document.getElementById('check-ollama-enabled')?.checked || false,
             ollama_base_url: document.getElementById('input-ollama-url')?.value.trim() || 'http://127.0.0.1:11434',
             ollama_model: document.getElementById('input-ollama-model')?.value.trim() || '',
+            assemblyai_enabled: document.getElementById('check-assemblyai-enabled')?.checked !== false,
+            assemblyai_api_key: document.getElementById('input-assemblyai-key')?.value.trim() || '',
+            assemblyai_region: document.getElementById('select-assemblyai-region')?.value || 'eu',
+            assemblyai_streaming_model: document.getElementById('select-assemblyai-model')?.value || 'universal-streaming-english',
+            assemblyai_speaker_labels: document.getElementById('check-assemblyai-speaker-labels')?.checked || false,
             source_language: document.getElementById('select-source-lang').value,
-            target_language: document.getElementById('select-target-lang').value,
             target_language: document.getElementById('select-target-lang').value,
             translation_mode: migrateTranslationMode(document.getElementById('select-translation-mode').value),
             translation_type: document.getElementById('select-translation-type')?.value || 'one_way',
@@ -2158,7 +2191,8 @@ class App {
     }
 
     _updatePillState(mode) {
-        const klass = this._engineClassFromMode(mode);
+        const runtime = this.activeSttProvider || mode;
+        const klass = runtime === 'local-stt' ? 'local' : runtime;
         document.querySelectorAll('#engine-pill .engine-pill-btn').forEach(btn => {
             btn.classList.toggle('active', btn.dataset.engineClass === klass);
         });
@@ -2196,12 +2230,18 @@ class App {
         const isGroq = mode === 'groq';
         const isCloudflare = mode === 'cloudflare';
         const isLocal = mode === 'local';
+        const isAssembly = mode === 'assemblyai';
+        const isAutomatic = mode === 'automatic';
         const isCloudRealtime = false;
-        this._updatePillState(mode);
+        this._updatePillState(this.activeSttProvider || mode);
 
+        const hintAuto = document.getElementById('hint-mode-automatic');
+        const hintAai = document.getElementById('hint-mode-assemblyai');
         const hintGroq = document.getElementById('hint-mode-groq');
         const hintCf = document.getElementById('hint-mode-cloudflare');
         const hintLocal = document.getElementById('hint-mode-local');
+        if (hintAuto) hintAuto.style.display = isAutomatic ? '' : 'none';
+        if (hintAai) hintAai.style.display = isAssembly ? '' : 'none';
         if (hintGroq) hintGroq.style.display = isGroq ? '' : 'none';
         if (hintCf) hintCf.style.display = isCloudflare ? '' : 'none';
         if (hintLocal) hintLocal.style.display = isLocal ? '' : 'none';
@@ -2210,8 +2250,9 @@ class App {
         const localUnsupported = isLocal && !this.isAppleSilicon;
         const missingKey =
             (isGroq && !(s.groq_api_key || '').trim()) ? 'Groq' :
-            (isCloudflare && (!(s.cloudflare_account_id || '').trim() || !(s.cloudflare_api_token || '').trim())) ? 'Cloudflare' : null;
-        const activeHint = isGroq ? hintGroq : isCloudflare ? hintCf : hintLocal;
+            (isCloudflare && (!(s.cloudflare_account_id || '').trim() || !(s.cloudflare_api_token || '').trim())) ? 'Cloudflare' :
+            (isAssembly && !(s.assemblyai_api_key || '').trim()) ? 'AssemblyAI' : null;
+        const activeHint = isAutomatic ? hintAuto : isAssembly ? hintAai : isGroq ? hintGroq : isCloudflare ? hintCf : hintLocal;
         if (activeHint) {
             activeHint.classList.toggle('hint-warning', localUnsupported || !!missingKey);
             if (localUnsupported) {
@@ -2223,8 +2264,10 @@ class App {
             }
         }
 
+        const sectionAai = document.getElementById('section-assemblyai-key');
         const sectionGroq = document.getElementById('section-groq-key');
         const sectionCf = document.getElementById('section-cloudflare-key');
+        if (sectionAai) sectionAai.style.display = isLocal ? 'none' : '';
         if (sectionGroq) sectionGroq.style.display = isLocal ? 'none' : '';
         if (sectionCf) sectionCf.style.display = isLocal ? 'none' : '';
         this._updateLlmProviderUI();
@@ -2282,9 +2325,9 @@ class App {
 
     _updateLlmProviderUI() {
         const mode = migrateTranslationMode(document.getElementById('select-translation-mode')?.value);
-        const llm = document.getElementById('select-llm-provider')?.value || 'openrouter';
+        const llm = document.getElementById('select-llm-provider')?.value || 'automatic';
         const isLocal = mode === 'local';
-        const useOpenRouter = !isLocal && llm === 'openrouter';
+        const useOpenRouter = !isLocal && (llm === 'openrouter' || llm === 'automatic');
         const sectionLlm = document.getElementById('section-llm-provider');
         const sectionOr = document.getElementById('section-openrouter-key');
         if (sectionLlm) sectionLlm.style.display = isLocal ? 'none' : '';
@@ -2320,6 +2363,8 @@ class App {
     // Inline format check — runs on every keystroke. Cheap, no network.
     // Updates: per-field status badge + engine dropdown option enable/disable.
     _refreshKeyStatus() {
+        const aaiKey = document.getElementById('input-assemblyai-key')?.value.trim() || '';
+        const aaiOk = aaiKey.length >= 20;
         const groqKey = document.getElementById('input-groq-key')?.value.trim() || '';
         const cfAccount = document.getElementById('input-cloudflare-account-id')?.value.trim() || '';
         const cfToken = document.getElementById('input-cloudflare-token')?.value.trim() || '';
@@ -2328,6 +2373,11 @@ class App {
         const orKey = document.getElementById('input-openrouter-key')?.value.trim() || '';
         const orOk = orKey.startsWith('sk-or-') || orKey.length >= 20;
 
+        const aaiStatus = document.getElementById('key-status-assemblyai');
+        if (aaiStatus) {
+            aaiStatus.className = 'key-status ' + (aaiKey === '' ? '' : aaiOk ? 'ok' : 'bad');
+            aaiStatus.textContent = aaiKey === '' ? '' : aaiOk ? '✓ format ok' : '✗ check format';
+        }
         const groqStatus = document.getElementById('key-status-groq');
         if (groqStatus) {
             groqStatus.className = 'key-status ' + (groqKey === '' ? '' : groqOk ? 'ok' : 'bad');
@@ -2366,7 +2416,12 @@ class App {
 
         try {
             let ok = false;
-            if (provider === 'groq') {
+            if (provider === 'assemblyai') {
+                const apiKey = document.getElementById('input-assemblyai-key')?.value.trim() || '';
+                const region = document.getElementById('select-assemblyai-region')?.value || 'eu';
+                if (!apiKey) throw new Error('empty');
+                ok = await invoke('assemblyai_ping', { apiKey, region });
+            } else if (provider === 'groq') {
                 const apiKey = document.getElementById('input-groq-key')?.value.trim() || '';
                 if (!apiKey) throw new Error('empty');
                 ok = await invoke('groq_ping', { apiKey });
@@ -2431,16 +2486,20 @@ class App {
             cloudflare_account_id: document.getElementById('input-cloudflare-account-id')?.value.trim() || settings.cloudflare_account_id,
             cloudflare_api_token: document.getElementById('input-cloudflare-token')?.value.trim() || settings.cloudflare_api_token,
             cloudflare_enabled: true,
+            assemblyai_api_key: document.getElementById('input-assemblyai-key')?.value.trim() || settings.assemblyai_api_key,
+            assemblyai_enabled: document.getElementById('check-assemblyai-enabled')?.checked ?? settings.assemblyai_enabled,
             azure_translator_enabled: document.getElementById('check-azure-enabled')?.checked ?? settings.azure_translator_enabled,
             azure_translator_key: document.getElementById('input-azure-key')?.value.trim() || settings.azure_translator_key,
             gemini_enabled: document.getElementById('check-gemini-enabled')?.checked ?? settings.gemini_enabled,
             gemini_api_key: document.getElementById('input-gemini-key')?.value.trim() || settings.gemini_api_key,
             ollama_enabled: document.getElementById('check-ollama-enabled')?.checked ?? settings.ollama_enabled,
             ollama_model: document.getElementById('input-ollama-model')?.value.trim() || settings.ollama_model,
+            llm_provider: document.getElementById('select-llm-provider')?.value || settings.llm_provider,
         };
 
-        const sttChain = getEffectiveSTTChain(formSettings);
-        const transChain = getEffectiveTranslationChain(formSettings, this.translationMode);
+        const platform = this._platformContext();
+        const sttChain = getEffectiveSTTChain(formSettings, platform);
+        const transChain = getEffectiveTranslationChain(formSettings, this.activeSttProvider || this.translationMode);
 
         const sttEl = document.getElementById('chain-stt-display');
         if (sttEl) {
@@ -2450,6 +2509,31 @@ class App {
         if (transEl) {
             transEl.textContent = transChain.length > 0 ? transChain.join(' → ') : 'None configured';
         }
+        const runtimeEl = document.getElementById('chain-runtime-stt');
+        if (runtimeEl) {
+            const primary = formSettings.translation_mode || settings.translation_mode || 'automatic';
+            const active = this.activeSttProvider || '—';
+            runtimeEl.textContent = `primary ${primary} · active ${active}`;
+        }
+        const breakerEl = document.getElementById('circuit-breaker-status-text');
+        if (breakerEl) {
+            const blocked = getCircuitBreakerStatuses().filter((s) => s.state !== 'closed');
+            if (!blocked.length) {
+                breakerEl.textContent = 'Circuit breakers: Normal';
+            } else {
+                breakerEl.textContent = blocked.map((s) => {
+                    const secs = s.remainingMs == null ? 'until reset' : `${Math.ceil(s.remainingMs / 1000)}s`;
+                    return `${s.key} (${secs})`;
+                }).join(' · ');
+            }
+        }
+    }
+
+    _platformContext() {
+        return {
+            os: this._platformOs,
+            isAppleSilicon: !!this.isAppleSilicon,
+        };
     }
 
     // ─── Start/Stop ────────────────────────────────────────
@@ -2465,22 +2549,9 @@ class App {
             return;
         }
 
-        if (this.translationMode === 'groq' && !settings.groq_api_key) {
-            this._showToast('Groq API key is required. Add it in Settings.', 'error');
-            this._showView('settings');
-            return;
-        }
-
-        if (this.translationMode === 'cloudflare' && (!settings.cloudflare_account_id || !settings.cloudflare_api_token)) {
-            this._showToast('Cloudflare account ID and API token are required. Add them in Settings.', 'error');
-            this._showView('settings');
-            return;
-        }
-
-        if (this.translationMode !== 'local'
-            && (settings.llm_provider || 'openrouter') === 'openrouter'
-            && !(settings.openrouter_api_key || '').trim()) {
-            this._showToast('OpenRouter API key is required for LLM. Add it in Settings.', 'error');
+        const startOrder = getSttStartOrder(settings, this._platformContext());
+        if (!startOrder.length) {
+            this._showToast('No STT providers are configured. Add credentials in Settings.', 'error');
             this._showView('settings');
             return;
         }
@@ -2521,15 +2592,14 @@ class App {
         }
 
         try {
-            if (this.translationMode === 'local') {
-                await this._startLocalMode(settings);
-            } else if (this.translationMode === 'groq') {
-                await this._startGroqMode(settings);
-            } else if (this.translationMode === 'cloudflare') {
-                await this._startCloudflareMode(settings);
-            } else {
-                throw new Error(`Unsupported engine: ${this.translationMode}`);
+            this._bindProviderClients();
+            await this._startSessionCapture();
+            let started = false;
+            for (const provider of startOrder) {
+                started = await this._connectSttProvider(provider);
+                if (started) break;
             }
+            if (!started) throw new Error('No STT provider could start');
             this.isRunning = true;
             this._updateStartButton();
         } catch (err) {
@@ -2551,18 +2621,35 @@ class App {
         this.isRunning = false;
         this.isStarting = false;
         this._fallbackInFlight = false;
+        this.activeSttProvider = null;
+        this.activeSttClient = null;
+        this._handoffBuffer = [];
+        this._translationJobs.clear();
         clearSessionState();
         this._setEnginePillLocked(false);
         this._updateStartButton();
         this._updateStatus('disconnected');
-        try { await invoke('stop_capture'); } catch { /* already stopped */ }
-        try { if (this.groqClient) await this.groqClient.disconnect(); } catch { /* ignore */ }
-        try { if (this.cloudflareClient) await this.cloudflareClient.disconnect(); } catch { /* ignore */ }
+        await this._disconnectAllStt();
+        try { await this._stopSessionCapture(); } catch { /* already stopped */ }
     }
 
-    async _startCaptureForClient(client) {
+    async _disconnectAllStt() {
+        for (const client of [this.assemblyaiClient, this.groqClient, this.cloudflareClient]) {
+            try { if (client) await client.disconnect(); } catch { /* ignore */ }
+        }
+        try { await invoke('stop_local_pipeline'); } catch { /* ignore */ }
+        this.localPipelineReady = false;
+    }
+
+    async _startSessionCapture() {
+        if (this._captureStarted) return;
         const audioChannel = new Channel();
         audioChannel.onmessage = async (pcmData) => {
+            const client = this.activeSttClient;
+            if (!client) {
+                if (this._handoffBuffer.length < 8) this._handoffBuffer.push(pcmData);
+                return;
+            }
             try {
                 await client.sendAudio(pcmData);
             } catch (e) {
@@ -2573,81 +2660,205 @@ class App {
             source: this.currentSource,
             channel: audioChannel,
         });
+        this._captureStarted = true;
     }
 
-    async _startGroqMode(settings) {
-        this._updateStatus('connecting');
-        this.transcriptUI.provider = 'groq';
-        this._bindProviderClients();
-        const config = clientConfigFromSettings(settings, 'groq');
-        this.groqClient.connect(config);
-        if (!this.groqClient.isConnected) {
-            throw new Error('Groq client failed to connect');
+    async _stopSessionCapture() {
+        if (!this._captureStarted && !this._handoffBuffer.length) {
+            try { await invoke('stop_capture'); } catch { /* ignore */ }
+            return;
         }
-        await this._startCaptureForClient(this.groqClient);
+        this._captureStarted = false;
+        this._handoffBuffer = [];
+        try { await invoke('stop_capture'); } catch { /* ignore */ }
     }
 
-    async _startCloudflareMode(settings) {
-        this._updateStatus('connecting');
-        this.transcriptUI.provider = 'cloudflare';
-        this._bindProviderClients();
-        const config = clientConfigFromSettings(settings, 'cloudflare');
-        this.cloudflareClient.connect(config);
-        if (!this.cloudflareClient.isConnected) {
-            throw new Error('Cloudflare client failed to connect');
+    _clientForProvider(provider) {
+        if (provider === 'assemblyai') return this.assemblyaiClient;
+        if (provider === 'groq') return this.groqClient;
+        if (provider === 'cloudflare') return this.cloudflareClient;
+        return null;
+    }
+
+    async _connectSttProvider(provider) {
+        const settings = settingsManager.get();
+        const key = breakerKey('stt', provider);
+        if (isCircuitBreakerOpen(key)) return false;
+        if (isCircuitBreakerHalfOpen(key)) noteHalfOpenProbe(key);
+
+        this._sttGeneration += 1;
+        const previous = this.activeSttClient;
+        this.activeSttClient = null;
+
+        if (previous && previous !== this._clientForProvider(provider)) {
+            try { await previous.disconnect(); } catch { /* ignore */ }
         }
-        await this._startCaptureForClient(this.cloudflareClient);
+
+        try {
+            if (provider === 'local-stt' || provider === 'local') {
+                await this._startLocalMode(settings);
+                this.activeSttProvider = 'local-stt';
+                this.activeSttClient = this._localAudioAdapter();
+            } else {
+                const client = this._clientForProvider(provider);
+                if (!client) return false;
+                this._bindProviderClients();
+                const config = clientConfigFromSettings(settings, provider === 'cloudflare' ? 'cloudflare' : 'groq');
+                if (provider === 'assemblyai') {
+                    await client.connect({
+                        ...config,
+                        region: settings.assemblyai_region || 'eu',
+                        model: settings.assemblyai_streaming_model || 'universal-streaming-english',
+                        speakerLabels: !!settings.assemblyai_speaker_labels,
+                    });
+                } else {
+                    client.connect(config);
+                }
+                if (!client.isConnected) throw new Error(`${provider} failed to connect`);
+                this.activeSttProvider = provider;
+                this.activeSttClient = client;
+                this.transcriptUI.provider = provider;
+            }
+            noteProviderSuccess(key);
+            markSttTransition();
+            this._updatePillState(this.activeSttProvider);
+            this._updateChainUI();
+            const pending = this._handoffBuffer.splice(0);
+            for (const chunk of pending) {
+                try { this.activeSttClient.sendAudio(chunk); } catch { /* ignore */ }
+            }
+            return true;
+        } catch (err) {
+            applyProviderError(parseProviderError(err, { provider, capability: 'stt' }));
+            return false;
+        }
     }
 
-    async _transitionToCloudflare() {
-        if (this._fallbackInFlight) return;
+    _localAudioAdapter() {
+        const self = this;
+        return {
+            providerId: 'local-stt',
+            async sendAudio(pcmData) {
+                if (!self.localPipelineReady) return;
+                try {
+                    await invoke('send_audio_to_pipeline', { data: Array.from(new Uint8Array(pcmData)) });
+                } catch {
+                    /* pipeline may not be ready */
+                }
+            },
+            async disconnect() {
+                try { await invoke('stop_local_pipeline'); } catch { /* ignore */ }
+                self.localPipelineReady = false;
+            },
+        };
+    }
+
+    async _failoverStt(error) {
+        if (this._fallbackInFlight || !this.isRunning) return;
+        if (error?.kind === ERROR_TYPES.INTENTIONAL) return;
         this._fallbackInFlight = true;
         try {
-            if (this.groqClient) {
-                try { await this.groqClient.disconnect(); } catch { /* ignore */ }
-            }
-            try { await invoke('stop_capture'); } catch { /* ignore */ }
-
+            let current = this.activeSttProvider;
+            let parsed = applyProviderError(error);
             const settings = settingsManager.get();
-            if (!settings.cloudflare_account_id || !settings.cloudflare_api_token) {
-                this._showToast('Cloudflare fallback needs account ID and token in Settings.', 'error');
-                await this._restoreStoppedState();
-                return;
+            while (this.isRunning) {
+                const next = nextSttProvider(settings, this._platformContext(), current);
+                if (!next) {
+                    this._showToast('All STT providers failed', 'error');
+                    await this._restoreStoppedState();
+                    return;
+                }
+                logProviderTransition(current, next, parsed.message);
+                this._showToast(`Switching to ${next}`, 'info');
+                const ok = await this._connectSttProvider(next);
+                if (ok) return;
+                parsed = parseProviderError(`${next} failed to start`, {
+                    provider: next,
+                    capability: 'stt',
+                    status: 503,
+                });
+                applyProviderError(parsed);
+                current = next;
             }
-            this.translationMode = 'cloudflare';
-            settingsManager.save({ translation_mode: 'cloudflare' });
-            const select = document.getElementById('select-translation-mode');
-            if (select) select.value = 'cloudflare';
-            this._updateModeUI('cloudflare');
-            await this._startCloudflareMode(settings);
-            this.isRunning = true;
-            this._updateStartButton();
-        } catch (err) {
-            console.error('[App] Transition to Cloudflare failed:', err);
-            this._showToast(`Fallback to Cloudflare failed: ${err?.message || err}`, 'error');
-            await this._restoreStoppedState();
         } finally {
             this._fallbackInFlight = false;
         }
+    }
+
+    _commitSourceTurn(text, speaker, language) {
+        const chunk = (text || '').trim();
+        if (!chunk) return;
+        this.transcriptUI.clearProvisional();
+        this.transcriptUI.addOriginal(chunk, speaker, language);
+        const segmentId = allocateSegmentId();
+        this._translationJobs.set(segmentId, { text: chunk });
+        void this._translateSegment(segmentId, chunk, language);
+        this._maybeRecoverStt();
+    }
+
+    async _translateSegment(segmentId, text, language) {
+        const settings = settingsManager.get();
+        try {
+            const result = await translateWithChain({
+                settings,
+                activeStt: this.activeSttProvider,
+                text,
+                sourceLanguage: language || this.sessionSourceLang || settings.source_language || 'auto',
+                targetLanguage: this.sessionTargetLang || settings.target_language || 'vi',
+                segmentId,
+                generation: segmentId,
+                isCurrent: (id) => this._translationJobs.has(id),
+                invoke,
+            });
+            if (result?.ignored) return;
+            if (!this._translationJobs.has(segmentId)) return;
+            const translated = result.translatedText || text;
+            this.transcriptUI.addTranslation(translated);
+            this._speakIfEnabled(translated);
+            sessionStore.addSegment(text, translated);
+            this._translationJobs.delete(segmentId);
+        } catch (err) {
+            const parsed = parseProviderError(err, { capability: 'translation' });
+            this._showToast(parsed.message || 'Translation failed', 'error');
+            if (this._translationJobs.has(segmentId)) {
+                sessionStore.addSegment(text, '');
+                this._translationJobs.delete(segmentId);
+            }
+        }
+    }
+
+    _maybeRecoverStt() {
+        if (!this.isRunning || this._fallbackInFlight) return;
+        if (this.transcriptUI.provisionalText) return;
+        if (!canTransitionStt()) return;
+        const better = preferredRecoveryStt(
+            settingsManager.get(),
+            this._platformContext(),
+            this.activeSttProvider,
+        );
+        if (!better || better === this.activeSttProvider) return;
+        if (better === 'assemblyai' && isCircuitBreakerOpen(breakerKey('stt', 'assemblyai'))) return;
+        logProviderTransition(this.activeSttProvider, better, 'priority recovery');
+        this._showToast(`Restoring ${better}`, 'info');
+        void this._connectSttProvider(better);
+    }
+
+    async _startGroqMode(settings) {
+        return this._connectSttProvider('groq');
+    }
+
+    async _startCloudflareMode(settings) {
+        return this._connectSttProvider('cloudflare');
+    }
+
+    async _transitionToCloudflare() {
+        return this._failoverStt(parseProviderError('quota', { provider: 'groq', capability: 'stt', status: 429 }));
     }
 
     async _startLocalMode(settings) {
         console.log('[App] Starting Local mode (MLX models)...');
         this.transcriptUI.provider = 'local';
         this._updateStatus('connecting');
-
-        // Step 0: Check audio permission FIRST (before loading models)
-        try {
-            await invoke('start_capture', {
-                source: this.currentSource,
-                channel: new window.__TAURI__.core.Channel(), // dummy channel for permission check
-            });
-            await invoke('stop_capture');
-        } catch (err) {
-            console.error('[App] Audio permission check failed:', err);
-            this._showToast(`Audio permission required: ${err}`, 'error');
-            throw err;
-        }
 
         // Step 1: Check if MLX setup is complete
         try {
@@ -2703,33 +2914,6 @@ class App {
             this._showToast(`Pipeline error: ${err}`, 'error');
             throw err;
         }
-
-        // Step 2: Start audio capture
-        try {
-            const audioChannel = new window.__TAURI__.core.Channel();
-            let audioChunkCount = 0;
-
-            audioChannel.onmessage = async (pcmData) => {
-                audioChunkCount++;
-                if (audioChunkCount <= 3 || audioChunkCount % 50 === 0) {
-                    console.log(`[Local] Audio batch #${audioChunkCount}, size:`, pcmData?.length || 0);
-                }
-                try {
-                    await invoke('send_audio_to_pipeline', { data: Array.from(new Uint8Array(pcmData)) });
-                } catch (e) {
-                    // Pipeline may not be ready yet
-                }
-            };
-
-            await invoke('start_capture', {
-                source: this.currentSource,
-                channel: audioChannel,
-            });
-            console.log('[App] Audio capture started');
-        } catch (err) {
-            console.error('Audio capture failed (pipeline still running):', err);
-            this._showToast(`Audio: ${err}. Pipeline still loading...`, 'error');
-        }
     }
 
     _handleLocalPipelineResult(data) {
@@ -2742,20 +2926,9 @@ class App {
                 this._showToast('Local models ready!', 'success');
                 break;
             case 'result':
-                // Chase effect: show original first (gray), then translation (white)
                 if (data.original) {
-                    this.transcriptUI.addOriginal(data.original);
+                    this._commitSourceTurn(data.original, null, settingsManager.get().source_language);
                 }
-                // Small delay for visual "chase" effect
-                setTimeout(() => {
-                if (data.translated) {
-                    this.transcriptUI.addTranslation(data.translated);
-                    this._speakIfEnabled(data.translated);
-                }
-                }, 80);
-                // Persist atomically — Local pipeline gives both texts in
-                // one event so we don't need FIFO pairing.
-                sessionStore.addSegment(data.original || '', data.translated || '');
                 break;
             case 'status':
                 const msg = data.message || 'Loading...';
@@ -2897,34 +3070,17 @@ class App {
         this._updateStartButton();
         this._setEnginePillLocked(false);
 
-        // Stop audio capture
+        // Stop audio capture once
         try {
-            await invoke('stop_capture');
+            await this._stopSessionCapture();
         } catch (err) {
             console.error('Failed to stop audio capture:', err);
         }
 
-        if (this.translationMode === 'local') {
-            // Stop local pipeline
-            try {
-                await invoke('stop_local_pipeline');
-            } catch (err) {
-                console.error('Failed to stop local pipeline:', err);
-            }
-            this.localPipelineReady = false;
-            this.transcriptUI.removeStatusMessage();
-            this._updateStatus('disconnected');
-        } else if (this.translationMode === 'groq') {
-            if (this.groqClient) {
-                try { await this.groqClient.disconnect(); } catch {}
-            }
-            this._updateStatus('disconnected');
-        } else if (this.translationMode === 'cloudflare') {
-            if (this.cloudflareClient) {
-                try { await this.cloudflareClient.disconnect(); } catch {}
-            }
-            this._updateStatus('disconnected');
-        }
+        await this._disconnectAllStt();
+        this.activeSttProvider = null;
+        this.activeSttClient = null;
+        this._updateStatus('disconnected');
 
         // Keep transcript visible — don't clear
         this.transcriptUI.clearProvisional();

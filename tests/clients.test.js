@@ -44,7 +44,7 @@ test('Groq client invokes Rust with PCM and language contract', async () => {
     const calls = [];
     setProviderInvoke(async (cmd, args) => {
         calls.push({ cmd, args });
-        return { source_text: 'hello', translated_text: 'xin chao' };
+        return { source_text: 'hello' };
     });
     const client = new GroqClient();
     const events = [];
@@ -62,16 +62,12 @@ test('Groq client invokes Rust with PCM and language contract', async () => {
     client._buffer.push(loudPcm(32000));
     await client._processAudioBuffer();
     assert.equal(calls.length, 1);
-    assert.equal(calls[0].cmd, 'groq_transcribe_and_translate');
+    assert.equal(calls[0].cmd, 'groq_transcribe_only');
     assert.equal(calls[0].args.sourceLanguage, 'en');
-    assert.equal(calls[0].args.targetLanguage, 'vi');
     assert.equal(calls[0].args.pcm.length, 32000);
     assert.equal(calls[0].args.sttModel, 'whisper-large-v3');
-    assert.equal(calls[0].args.llmModel, 'llama-3.3-70b-versatile');
     assert.deepEqual(events, [
         ['original', 'hello'],
-        ['translation', 'xin chao'],
-        ['segment', 'hello', 'xin chao'],
     ]);
     assert.equal(typeof client._translateText, 'undefined');
 });
@@ -137,7 +133,7 @@ test('Cloudflare client invokes Rust command', async () => {
     });
     client._buffer.push(loudPcm(4));
     await client._processAudioBuffer();
-    assert.equal(calls[0].cmd, 'cloudflare_transcribe_and_translate');
+    assert.equal(calls[0].cmd, 'cloudflare_transcribe_only');
     assert.equal(calls[0].args.accountId, 'acct');
     assert.equal(typeof client._translateText, 'undefined');
 });

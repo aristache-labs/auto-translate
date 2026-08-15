@@ -67,6 +67,14 @@
       <!-- Live status row: engine · state · languages · audio source -->
       <div class="live-status-row">
         <div class="engine-pill" id="engine-pill" title="Click to switch engine">
+          <button class="engine-pill-btn" data-engine-class="automatic" type="button">
+            <span class="engine-pill-icon">↻</span>
+            <span class="engine-pill-label">Auto</span>
+          </button>
+          <button class="engine-pill-btn" data-engine-class="assemblyai" type="button">
+            <span class="engine-pill-icon">◆</span>
+            <span class="engine-pill-label">AssemblyAI</span>
+          </button>
           <button class="engine-pill-btn active" data-engine-class="groq" type="button">
             <span class="engine-pill-icon">⚡</span>
             <span class="engine-pill-label">Groq</span>
@@ -354,11 +362,15 @@
         <div class="settings-section">
           <span class="field-label">Engine</span>
           <select id="select-translation-mode">
+            <option value="automatic">Automatic — AssemblyAI → Groq → Cloudflare → Local</option>
+            <option value="assemblyai">AssemblyAI Streaming</option>
             <option value="groq">⚡ Groq — Fast (Primary)</option>
             <option value="cloudflare">☁️ Cloudflare — Fallback</option>
             <option value="local">🖥️ Local MLX</option>
           </select>
-          <p class="hint" id="hint-mode-groq">Cloud · Whisper v3 · ~$0.02/hr · Fallback to Cloudflare</p>
+          <p class="hint" id="hint-mode-automatic">Uses the first healthy STT provider in the chain. Temporary fallback does not change this setting.</p>
+          <p class="hint" id="hint-mode-assemblyai" style="display:none">Streaming STT · EU by default · translation uses the independent chain</p>
+          <p class="hint" id="hint-mode-groq" style="display:none">Cloud · Whisper v3 · ~$0.02/hr · Fallback continues down the chain</p>
           <p class="hint" id="hint-mode-cloudflare" style="display:none">Cloud · Whisper v3 · Reliable backup engine</p>
           <p class="hint" id="hint-mode-local" style="display:none">Offline · free · ~3–4s delay</p>
         </div>
@@ -366,10 +378,11 @@
         <div class="settings-section" id="section-llm-provider">
           <span class="field-label">LLM</span>
           <select id="select-llm-provider">
+            <option value="automatic">Automatic — OpenRouter → engine LLM → Azure → Gemini → Ollama</option>
             <option value="openrouter">OpenRouter</option>
             <option value="engine">Same as engine</option>
           </select>
-          <p class="hint">Engine above is STT. Translation uses this LLM. Local engine always uses Local MLX.</p>
+          <p class="hint">Engine above is STT. Translation rotates independently. AssemblyAI is STT-only.</p>
         </div>
 
         <div class="settings-section" id="section-openrouter-key">
@@ -390,6 +403,50 @@
           <span class="field-label" style="margin-top:10px">OpenRouter model</span>
           <input type="text" id="input-openrouter-llm-model" placeholder="openai/gpt-4o-mini" autocomplete="off" spellcheck="false" />
           <p class="hint">Any OpenRouter chat model id, e.g. openai/gpt-4o-mini. Embedding models will not translate.</p>
+        </div>
+
+        <div class="settings-section" id="section-assemblyai-key">
+          <div class="field-row" style="align-items: center; justify-content: space-between;">
+            <span class="field-label">
+              AssemblyAI Streaming
+              <span id="key-status-assemblyai" class="key-status"></span>
+            </span>
+            <label class="checkbox-label" style="margin: 0;">
+              <input type="checkbox" id="check-assemblyai-enabled" /> Enable
+            </label>
+          </div>
+          <div class="input-group" style="margin-top:6px">
+            <input type="password" id="input-assemblyai-key" placeholder="AssemblyAI API key" autocomplete="off" />
+            <button id="btn-toggle-assemblyai-key" class="icon-btn small" title="Show/Hide">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" />
+              </svg>
+            </button>
+            <button id="btn-test-assemblyai" class="btn-secondary small" title="Test connection">Test</button>
+          </div>
+          <div class="field-row" style="margin-top:8px">
+            <div class="field" style="flex:1">
+              <span class="field-label">Region</span>
+              <select id="select-assemblyai-region">
+                <option value="eu">EU (default)</option>
+                <option value="us">US</option>
+                <option value="global">Global / Edge</option>
+              </select>
+            </div>
+            <div class="field" style="flex:1; margin-left:8px">
+              <span class="field-label">Streaming model</span>
+              <select id="select-assemblyai-model">
+                <option value="universal-streaming-english">universal-streaming-english</option>
+                <option value="universal-streaming-multilingual">universal-streaming-multilingual</option>
+                <option value="u3-rt-pro">u3-rt-pro</option>
+                <option value="whisper-rt">whisper-rt</option>
+              </select>
+            </div>
+          </div>
+          <label class="checkbox-label" style="margin-top:8px">
+            <input type="checkbox" id="check-assemblyai-speaker-labels" /> Speaker labels
+          </label>
+          <p class="hint">Credential test mints a short-lived token only — it does not start capture or leave a stream open.</p>
         </div>
 
         <div class="settings-section" id="section-groq-key">
@@ -534,8 +591,9 @@
         <div class="settings-section" id="section-provider-fallback">
           <span class="field-label">Provider Fallback Chains</span>
           <div class="chain-box" style="background: rgba(255,255,255,0.03); padding: 8px 12px; border-radius: 6px; font-size: 12px; margin-top: 6px;">
-            <div><strong>STT Chain:</strong> <span id="chain-stt-display">Groq → Cloudflare Workers AI → Local STT</span></div>
-            <div style="margin-top: 4px;"><strong>Translation Chain:</strong> <span id="chain-translation-display">OpenRouter → STT Engine → Azure Translator → Gemini → Local Ollama</span></div>
+            <div><strong>STT Chain:</strong> <span id="chain-stt-display">AssemblyAI → Groq → Cloudflare → Local STT</span></div>
+            <div style="margin-top: 4px;"><strong>Translation Chain:</strong> <span id="chain-translation-display">OpenRouter → engine LLM → Azure Translator → Gemini → Local Ollama</span></div>
+            <div style="margin-top: 4px;"><strong>Runtime STT:</strong> <span id="chain-runtime-stt">—</span></div>
           </div>
           <div style="margin-top: 8px; display: flex; align-items: center; justify-content: space-between;">
             <span id="circuit-breaker-status-text" class="hint" style="margin:0;">Circuit breakers: Normal</span>
