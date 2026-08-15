@@ -2805,6 +2805,42 @@ class App {
         }
     }
 
+    _flushOpenTurnBeforeStop() {
+        const source = (
+            this.transcriptUI?.provisionalText
+            || this._liveSourceText
+            || ''
+        ).trim();
+        if (!source) return;
+
+        const segments = this.transcriptUI.segments || [];
+        const last = segments[segments.length - 1];
+        if (last?.original && (last.original === source || source === last.original.trim())) {
+            const live = (this.transcriptUI.translationProvisionalText || '').trim();
+            if (live && !last.translation) {
+                this.transcriptUI.addTranslation(live);
+                sessionStore.addSegment(source, live);
+            }
+            return;
+        }
+
+        const live = (this.transcriptUI.translationProvisionalText || '').trim();
+        this.transcriptUI.addOriginal(source);
+        if (live) {
+            this.transcriptUI.addTranslation(live);
+            sessionStore.addSegment(source, live);
+        } else {
+            const segmentId = allocateSegmentId();
+            this._translationJobs.set(segmentId, { text: source });
+            this._enqueueTranslation(
+                segmentId,
+                source,
+                this._liveSourceLang || this.sessionSourceLang,
+            );
+        }
+        console.debug(`[timing] stt.flush_on_stop chars=${source.length} live=${!!live}`);
+    }
+
     _invalidateLiveTranslation() {
         this._liveTranslationGen += 1;
         this._liveSourceText = '';
@@ -3195,10 +3231,11 @@ class App {
         await this._disconnectAllStt();
         this.activeSttProvider = null;
         this.activeSttClient = null;
+        this._flushOpenTurnBeforeStop();
         this._invalidateLiveTranslation();
         this._updateStatus('disconnected');
 
-        // Keep transcript visible — don't clear
+        // Keep finalized transcript visible — don't clear segments
         this.transcriptUI.clearProvisional();
 
         // Stop TTS

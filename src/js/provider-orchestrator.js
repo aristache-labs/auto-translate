@@ -458,8 +458,8 @@ function translatedFromResult(result) {
 }
 
 export const LIVE_TRANSLATION_TIMEOUT_MS = 2500;
-export const LIVE_TRANSLATION_MIN_INTERVAL_MS = 800;
-export const LIVE_TRANSLATION_MIN_NEW_WORDS = 8;
+export const LIVE_TRANSLATION_MIN_INTERVAL_MS = 1400;
+export const LIVE_TRANSLATION_MIN_NEW_WORDS = 12;
 
 export function countWords(text) {
   return String(text || '')

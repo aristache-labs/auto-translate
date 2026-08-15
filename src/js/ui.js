@@ -352,16 +352,35 @@ export class TranscriptUI {
     setTranslationProvisional(text) {
         this._removeListening();
         const nextText = text || '';
+        const previous = this.translationProvisionalText || '';
         const previousVisible = this.translationProvisionalVisible;
-        const wasCaughtUp = previousVisible >= textLength(this.translationProvisionalText);
-        const stablePrefix = commonPrefixLength(this.translationProvisionalText, nextText);
+        const stablePrefix = commonPrefixLength(previous, nextText);
+        const minLen = Math.min(previous.length, nextText.length);
+        const prefixRatio = minLen ? stablePrefix / minLen : 1;
+
+        // Divergent full re-translations flicker; keep the previous draft until
+        // the next revision shares enough prefix or a final commit arrives.
+        if (
+            previous
+            && nextText
+            && previousVisible > 24
+            && prefixRatio < 0.5
+            && !nextText.startsWith(previous.slice(0, Math.min(48, previous.length)))
+        ) {
+            return;
+        }
+
         this.translationProvisionalVisible = this._reducedMotion
             ? textLength(nextText)
-            : Math.min(this.translationProvisionalVisible, stablePrefix);
-        const revisionTouchedVisibleText = stablePrefix < previousVisible;
+            : Math.min(
+                previousVisible,
+                // Avoid snapping the visible caret back to zero on small edits.
+                Math.max(stablePrefix, previousVisible > 0 ? previousVisible - 16 : 0),
+            );
         if (!nextText) {
             this._translationProvisionalStartedAt = 0;
-        } else if (!this._translationProvisionalStartedAt || wasCaughtUp || revisionTouchedVisibleText) {
+            this.translationProvisionalVisible = 0;
+        } else if (!this._translationProvisionalStartedAt || this.translationProvisionalVisible >= textLength(previous)) {
             this._translationProvisionalStartedAt = Date.now();
         }
         this.translationProvisionalText = nextText;
@@ -1033,25 +1052,12 @@ export class TranscriptUI {
     }
 
     /**
-     * Remove stale original segments that never received translation.
-     * - Originals older than 10s are removed
-     * - Max 3 pending originals allowed (oldest dropped)
+     * Cap pending originals waiting on translation. Do not time-delete them —
+     * slow translation (429 / chain fallback) must not wipe visible transcript.
      */
     _cleanupStaleOriginals() {
-        const now = Date.now();
-        const STALE_MS = 10000; // 10 seconds
-        const MAX_PENDING = 3;
-
-        // Remove originals older than STALE_MS
-        this.segments = this.segments.filter(seg => {
-            if (seg.status === 'original' && (now - (seg.updatedAt || seg.createdAt)) > STALE_MS) {
-                return false; // drop stale
-            }
-            return true;
-        });
-
-        // If still too many pending originals, drop oldest
-        let pending = this.segments.filter(s => s.status === 'original');
+        const MAX_PENDING = 8;
+        let pending = this.segments.filter((s) => s.status === 'original');
         while (pending.length > MAX_PENDING) {
             const oldest = pending.shift();
             const idx = this.segments.indexOf(oldest);
