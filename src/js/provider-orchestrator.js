@@ -45,12 +45,13 @@ export function breakerKey(capability, provider) {
 
 export function classifyError(status, body, provider) {
   if (status === 429) return ERROR_TYPES.QUOTA;
+  const text = typeof body === 'string' ? body : '';
+  if (/quota|rate[\s_-]?limit/i.test(text)) return ERROR_TYPES.QUOTA;
   if (status === 408 || (status >= 500 && status < 600)) return ERROR_TYPES.TEMPORARY;
   if (status === 400 || status === 401 || status === 403) return ERROR_TYPES.CONFIG;
   if ((provider === 'local' || provider === 'local-stt') && status === null) {
     return ERROR_TYPES.UNSUPPORTED;
   }
-  const text = typeof body === 'string' ? body : '';
   if (/intentional|terminated by user/i.test(text)) return ERROR_TYPES.INTENTIONAL;
   return ERROR_TYPES.TEMPORARY;
 }
@@ -496,7 +497,8 @@ export async function translateWithChain({
         capability: 'translation',
       });
       lastError = parsed;
-      if (parsed.kind === ERROR_TYPES.TEMPORARY) {
+      // Never retry quota locally — skip immediately to the next provider.
+      if (parsed.kind === ERROR_TYPES.TEMPORARY && parsed.status !== 429) {
         try {
           const retry = await invokeTranslation(invoke, provider, settings, source, sourceLanguage, targetLanguage);
           if (typeof isCurrent === 'function' && !isCurrent(segmentId, generation)) {

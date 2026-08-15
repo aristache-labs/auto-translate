@@ -125,6 +125,7 @@ class App {
         this._captureStarted = false;
         this._handoffBuffer = [];
         this._translationJobs = new Map();
+        this._translationQueue = Promise.resolve();
         this._fallbackInFlight = false;
         this.transcriptUI = null;
         this.appWindow = getCurrentWindow();
@@ -2625,6 +2626,7 @@ class App {
         this.activeSttClient = null;
         this._handoffBuffer = [];
         this._translationJobs.clear();
+        this._translationQueue = Promise.resolve();
         clearSessionState();
         this._setEnginePillLocked(false);
         this._updateStartButton();
@@ -2792,8 +2794,14 @@ class App {
         this.transcriptUI.addOriginal(chunk, speaker, language);
         const segmentId = allocateSegmentId();
         this._translationJobs.set(segmentId, { text: chunk });
-        void this._translateSegment(segmentId, chunk, language);
+        this._enqueueTranslation(segmentId, chunk, language);
         this._maybeRecoverStt();
+    }
+
+    _enqueueTranslation(segmentId, text, language) {
+        this._translationQueue = this._translationQueue
+            .then(() => this._translateSegment(segmentId, text, language))
+            .catch(() => { /* errors handled inside _translateSegment */ });
     }
 
     async _translateSegment(segmentId, text, language) {

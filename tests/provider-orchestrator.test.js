@@ -52,6 +52,8 @@ const FULL_SETTINGS = {
 
 test('classifyError categorizes HTTP status codes properly', () => {
   assert.equal(classifyError(429, '{}', 'openrouter'), ERROR_TYPES.QUOTA);
+  assert.equal(classifyError(null, 'Quota exhausted: daily limit', 'groq'), ERROR_TYPES.QUOTA);
+  assert.equal(classifyError(null, 'Rate limit exceeded', 'gemini'), ERROR_TYPES.QUOTA);
   assert.equal(classifyError(408, '{}', 'groq'), ERROR_TYPES.TEMPORARY);
   assert.equal(classifyError(500, '{}', 'groq'), ERROR_TYPES.TEMPORARY);
   assert.equal(classifyError(503, '{}', 'cloudflare'), ERROR_TYPES.TEMPORARY);

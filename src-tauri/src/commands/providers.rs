@@ -222,6 +222,8 @@ fn provider_error_json(
 fn http_error_status(status: reqwest::StatusCode, body: &str) -> String {
     let code = status.as_u16();
     eprintln!("[provider] HTTP {code}");
+    // Always embed "HTTP {code}" so wrap_provider_error preserves the real status
+    // (otherwise "Quota exhausted: …" without digits is mis-wrapped as 500/temporary).
     if let Ok(v) = serde_json::from_str::<serde_json::Value>(body) {
         if let Some(msg) = v
             .pointer("/error/message")
@@ -230,17 +232,17 @@ fn http_error_status(status: reqwest::StatusCode, body: &str) -> String {
         {
             let short: String = msg.chars().take(140).collect();
             return match code {
-                429 => format!("Quota exhausted: {short}"),
-                401 | 403 => format!("Auth failed: {short}"),
-                410 => format!("Model unavailable: {short}"),
+                429 => format!("Quota exhausted (HTTP 429): {short}"),
+                401 | 403 => format!("Auth failed (HTTP {code}): {short}"),
+                410 => format!("Model unavailable (HTTP 410): {short}"),
                 _ => format!("HTTP {code}: {short}"),
             };
         }
     }
     match code {
         429 => "Quota exhausted (HTTP 429)".into(),
-        401 | 403 => "Authentication failed".into(),
-        410 => "Model deprecated or removed".into(),
+        401 | 403 => format!("Authentication failed (HTTP {code})"),
+        410 => "Model deprecated or removed (HTTP 410)".into(),
         _ => format!("HTTP {code}"),
     }
 }
@@ -701,6 +703,7 @@ async fn gemini_translate(
         .map_err(|e| format!("Gemini request failed: {e}"))?;
 
     let status = resp.status();
+    let retry = retry_after_ms(resp.headers());
     let body = resp.text().await.map_err(|e| e.to_string())?;
 
     if !status.is_success() {
@@ -715,32 +718,57 @@ async fn gemini_translate(
             .unwrap_or_default();
         match code {
             401 | 403 => {
-                return Err(if api_msg.is_empty() {
+                let message = if api_msg.is_empty() {
                     "Gemini: Invalid API key".to_string()
                 } else {
                     format!("Gemini: {api_msg}")
-                });
+                };
+                return Err(provider_error_json("gemini", "translation", status, &message, None));
             }
             404 => {
-                return Err(format!(
-                    "Gemini: Model '{model_id}' not found — try gemini-3.1-flash-lite or gemini-flash-lite-latest"
+                return Err(provider_error_json(
+                    "gemini",
+                    "translation",
+                    status,
+                    &format!(
+                        "Gemini: Model '{model_id}' not found — try gemini-3.1-flash-lite or gemini-flash-lite-latest"
+                    ),
+                    None,
                 ));
             }
-            429 => return Err("Gemini: Rate limit exceeded (quota exhausted)".to_string()),
-            500..=599 => return Err("Gemini: Service unavailable".to_string()),
+            429 => {
+                return Err(provider_error_json(
+                    "gemini",
+                    "translation",
+                    status,
+                    "Gemini: Rate limit exceeded (quota exhausted)",
+                    retry,
+                ));
+            }
+            500..=599 => {
+                return Err(provider_error_json(
+                    "gemini",
+                    "translation",
+                    status,
+                    "Gemini: Service unavailable",
+                    None,
+                ));
+            }
             400 => {
-                return Err(if api_msg.is_empty() {
+                let message = if api_msg.is_empty() {
                     "Gemini: Invalid request".to_string()
                 } else {
                     format!("Gemini: {api_msg}")
-                });
+                };
+                return Err(provider_error_json("gemini", "translation", status, &message, None));
             }
             _ => {
-                return Err(if api_msg.is_empty() {
+                let message = if api_msg.is_empty() {
                     format!("Gemini error ({code})")
                 } else {
                     format!("Gemini: {api_msg}")
-                });
+                };
+                return Err(provider_error_json("gemini", "translation", status, &message, None));
             }
         }
     }
@@ -1127,6 +1155,7 @@ fn wrap_provider_error(provider: &str, capability: &str, err: String) -> String 
     if err.trim().starts_with('{') {
         return err;
     }
+    let lower = err.to_ascii_lowercase();
     let code = err
         .rsplit("HTTP ")
         .next()
@@ -1136,6 +1165,13 @@ fn wrap_provider_error(provider: &str, capability: &str, err: String) -> String 
                 .iter()
                 .find(|s| err.contains(*s))
                 .and_then(|s| s.parse().ok())
+        })
+        .or_else(|| {
+            if lower.contains("quota") || lower.contains("rate limit") {
+                Some(429)
+            } else {
+                None
+            }
         })
         .unwrap_or(500);
     let status = reqwest::StatusCode::from_u16(code).unwrap_or(reqwest::StatusCode::INTERNAL_SERVER_ERROR);
@@ -1689,5 +1725,12 @@ mod tests {
         let wrapped = wrap_provider_error("groq", "stt", "HTTP 429".into());
         assert!(wrapped.contains("\"status\":429"));
         assert!(!wrapped.to_lowercase().contains("authorization"));
+        let quota_msg = wrap_provider_error(
+            "groq",
+            "translation",
+            "Quota exhausted: You exceeded your current quota".into(),
+        );
+        assert!(quota_msg.contains("\"status\":429"));
+        assert!(quota_msg.contains("\"kind\":\"quota\""));
     }
 }
