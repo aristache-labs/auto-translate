@@ -96,26 +96,44 @@ test('short fragments without punctuation merge into one bubble', (t) => {
     assert.equal(ui.segments[0].translation, 'În acest timp împreună să fii cu mine și');
 });
 
-test('up to three short sentences share one conversation block', (t) => {
+test('continuous speech stays in one paragraph instead of splitting by sentence count', (t) => {
     const ui = withFakeDom(t);
-    ui.addOriginal('First sentence.', null, 'en');
-    ui.addTranslation('Prima propoziție.');
-    ui.addOriginal('Second sentence.', null, 'en');
-    ui.addTranslation('A doua propoziție.');
-    ui.addOriginal('Third sentence.', null, 'en');
-    ui.addTranslation('A treia propoziție.');
-    ui.addOriginal('Fourth sentence.', null, 'en');
-    ui.addTranslation('A patra propoziție.');
+    for (let index = 1; index <= 6; index += 1) {
+        ui.addOriginal(`Sentence ${index}.`, null, 'en');
+        ui.addTranslation(`Propoziția ${index}.`);
+    }
 
-    assert.equal(ui.segments.length, 2);
+    assert.equal(ui.segments.length, 1);
     assert.equal(
         ui.segments[0].original,
-        'First sentence. Second sentence. Third sentence.'
+        'Sentence 1. Sentence 2. Sentence 3. Sentence 4. Sentence 5. Sentence 6.'
     );
-    assert.equal(ui.segments[1].original, 'Fourth sentence.');
+});
+
+test('a genuinely large paragraph starts a new conversation block', (t) => {
+    const ui = withFakeDom(t);
+    ui.addOriginal(`Opening ${'context '.repeat(85)}`, null, 'en');
+    ui.addTranslation(`Introducere ${'context '.repeat(85)}`);
+    ui.addOriginal(`Next ${'thought '.repeat(85)}`, null, 'en');
+
+    assert.equal(ui.segments.length, 2);
+});
+
+test('overlapping STT boundary words are folded into the existing paragraph', (t) => {
+    const ui = withFakeDom(t);
+    ui.addOriginal('We jump into this extraordinary episode.', null, 'en');
+    ui.addTranslation('Intrăm în acest episod extraordinar.');
+    ui.addOriginal('episode. My team was showing me something.', null, 'en');
+    ui.addTranslation('episod extraordinar. Echipa mea îmi arăta ceva.');
+
+    assert.equal(ui.segments.length, 1);
+    assert.equal(
+        ui.segments[0].original,
+        'We jump into this extraordinary episode. My team was showing me something.'
+    );
     assert.equal(
         ui.segments[0].translation,
-        'Prima propoziție. A doua propoziție. A treia propoziție.'
+        'Intrăm în acest episod extraordinar. Echipa mea îmi arăta ceva.'
     );
 });
 
@@ -158,7 +176,7 @@ test('speaker changes always start a new conversation block', (t) => {
     assert.equal(ui.segments[1].speaker, '2');
 });
 
-test('translation-only streams also group short sentences', (t) => {
+test('translation-only streams also form continuous paragraphs', (t) => {
     const ui = withFakeDom(t);
     ui.provider = 'qwen';
     ui.addTranslation('Prima propoziție.');
@@ -166,10 +184,10 @@ test('translation-only streams also group short sentences', (t) => {
     ui.addTranslation('A treia propoziție.');
     ui.addTranslation('A patra propoziție.');
 
-    assert.equal(ui.segments.length, 2);
+    assert.equal(ui.segments.length, 1);
     assert.equal(
         ui.segments[0].translation,
-        'Prima propoziție. A doua propoziție. A treia propoziție.'
+        'Prima propoziție. A doua propoziție. A treia propoziție. A patra propoziție.'
     );
 });
 
@@ -181,4 +199,13 @@ test('a provisional repeat of the latest final source is not rendered twice', (t
 
     assert.doesNotMatch(ui.contentEl.innerHTML, /provisional-pair/);
     assert.equal((ui.contentEl.innerHTML.match(/class="transcript-pair(?:\s|")/g) || []).length, 1);
+});
+
+test('a short meaningful provisional tail is not repeated as a new live line', (t) => {
+    const ui = withFakeDom(t);
+    ui.configure({ viewMode: 'dual', sourceLanguage: 'en', targetLanguage: 'ro' });
+    ui.addOriginal('We jump into this extraordinary episode.', null, 'en');
+    ui.setProvisional('episode.', null, 'en');
+
+    assert.doesNotMatch(ui.contentEl.innerHTML, /provisional-pair/);
 });

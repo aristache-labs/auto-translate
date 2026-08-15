@@ -5,21 +5,37 @@ import {
     visibleText,
 } from './adaptive-typewriter.js';
 
-const SENTENCE_BOUNDARY_RE = /[.!?…]+["'”’)\]]*(?=\s|$)/g;
-const MERGE_MAX_CHARS = 560;
-const MERGE_MAX_GAP_MS = 7000;
-const MERGE_MAX_SENTENCES = 3;
+const MERGE_MAX_CHARS = 760;
+const MERGE_MAX_GAP_MS = 12000;
+
+function comparableToken(token) {
+    return normalizedSpeech(token);
+}
+
+function overlappingWordCount(previousWords, nextWords) {
+    const maxOverlap = Math.min(12, previousWords.length, nextWords.length);
+    for (let size = maxOverlap; size > 0; size -= 1) {
+        const previousTail = previousWords.slice(-size).map(comparableToken);
+        const nextHead = nextWords.slice(0, size).map(comparableToken);
+        if (previousTail.some((token) => !token) || nextHead.some((token) => !token)) continue;
+        if (!previousTail.every((token, index) => token === nextHead[index])) continue;
+
+        // A single common short word is weak evidence of an STT overlap. Longer
+        // words ("episode", "literally") and multi-word matches are safe to fold.
+        if (size > 1 || previousTail[0].length >= 5) return size;
+    }
+    return 0;
+}
 
 function joinSpeech(prev, next) {
     const a = (prev || '').trim();
     const b = (next || '').trim();
     if (!a) return b;
     if (!b) return a;
-    return `${a} ${b}`.replace(/\s+/g, ' ');
-}
-
-function sentenceCount(text) {
-    return ((text || '').match(SENTENCE_BOUNDARY_RE) || []).length;
+    const previousWords = a.split(/\s+/);
+    const nextWords = b.split(/\s+/);
+    const overlap = overlappingWordCount(previousWords, nextWords);
+    return `${a} ${nextWords.slice(overlap).join(' ')}`.replace(/\s+/g, ' ').trim();
 }
 
 function normalizedSpeech(text) {
@@ -33,7 +49,9 @@ function repeatsRecentTail(recentText, candidate) {
     const recent = normalizedSpeech(recentText);
     const next = normalizedSpeech(candidate);
     if (!recent || !next) return false;
-    return recent === next || (next.length >= 12 && recent.endsWith(next));
+    const meaningfulSingleWord = !next.includes(' ') && next.length >= 5;
+    return recent === next
+        || ((next.length >= 12 || meaningfulSingleWord) && recent.endsWith(next));
 }
 
 /**
@@ -929,7 +947,7 @@ export class TranscriptUI {
         if (Date.now() - lastAt > MERGE_MAX_GAP_MS) return false;
         const combined = joinSpeech(last.original, chunk);
         if (combined.length > MERGE_MAX_CHARS) return false;
-        return sentenceCount(combined) <= MERGE_MAX_SENTENCES;
+        return true;
     }
 
     _canMergeTranslationOnly(last, chunk) {
@@ -937,8 +955,7 @@ export class TranscriptUI {
         const lastAt = last.updatedAt || last.createdAt || 0;
         if (Date.now() - lastAt > MERGE_MAX_GAP_MS) return false;
         const combined = joinSpeech(last.translation, chunk);
-        return combined.length <= MERGE_MAX_CHARS
-            && sentenceCount(combined) <= MERGE_MAX_SENTENCES;
+        return combined.length <= MERGE_MAX_CHARS;
     }
 
     _trimSegments() {
