@@ -183,9 +183,9 @@ export function anyMenuOpen() {
  * Sizes persist per-mode in localStorage (same store the app already uses
  * for window_state), so no backend settings round-trip is needed. */
 
-const OVERLAY_DEFAULT = { w: 520, h: 420 };
+const OVERLAY_DEFAULT = { w: 900, h: 500 };
 const EXPANDED_DEFAULT = { w: 900, h: 640 };
-const SIZE_MIN = { w: 360, h: 240 };
+const SIZE_MIN = { w: 420, h: 240 };
 const SIZE_MAX = { w: 1600, h: 1200 };
 
 let appWindowRef = null;
@@ -193,6 +193,7 @@ let windowMode = 'overlay';
 let applyingMode = false; // guard: programmatic setSize must not overwrite saved sizes
 let applyingModeTimer = null;
 let resizeSaveTimer = null;
+let ignoreResizeUntil = 0;
 
 export function getWindowMode() {
     return windowMode;
@@ -224,7 +225,7 @@ async function currentLogicalSize() {
 }
 
 async function saveSizeForMode(mode) {
-    if (applyingMode) return;
+    if (applyingMode || Date.now() < ignoreResizeUntil) return;
     try {
         const size = await currentLogicalSize();
         if (!size) return;
@@ -267,22 +268,22 @@ export async function initWindowModes(appWindow) {
     appWindowRef = appWindow;
     document.getElementById('btn-window-mode')?.addEventListener('click', () => toggleWindowMode());
 
+    // Ignore the native create/center resize so we never persist or re-apply it.
+    ignoreResizeUntil = Date.now() + 1500;
+
     // User resizes update the remembered size of the CURRENT mode (debounced).
     try {
         await appWindow.onResized(() => {
-            if (applyingMode) return;
+            if (applyingMode || Date.now() < ignoreResizeUntil) return;
             clearTimeout(resizeSaveTimer);
             resizeSaveTimer = setTimeout(() => saveSizeForMode(windowMode), 500);
         });
     } catch { /* onResized unavailable — sizes just won't persist */ }
 
+    // Restore CSS mode only — never setSize on launch (that was growing the window).
     const saved = localStorage.getItem('window_mode');
-    if (saved === 'expanded') {
-        await applyWindowMode('expanded');
-    } else {
-        windowMode = 'overlay';
-        document.body.classList.remove('expanded');
-    }
+    windowMode = saved === 'expanded' ? 'expanded' : 'overlay';
+    document.body.classList.toggle('expanded', windowMode === 'expanded');
     const btn = document.getElementById('btn-window-mode');
     if (btn) btn.title = windowMode === 'expanded' ? 'Shrink to overlay' : 'Expand window';
 }

@@ -15,7 +15,7 @@
         "title": "My Translator",
         "width": 900,
         "height": 500,
-        "minWidth": 820,
+        "minWidth": 420,
         "minHeight": 240,
         "center": true,
         "transparent": false,
