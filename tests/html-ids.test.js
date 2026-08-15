@@ -42,3 +42,13 @@ test('TranscriptUI contract methods exist in ui.js', () => {
     assert.equal(ui.includes('setOriginal('), false);
     assert.equal(ui.includes('setTranslation('), false);
 });
+
+test('split view closes its menu and compact mode has a restore control', () => {
+    assert.match(html, /id="btn-restore-toolbar"/);
+    assert.match(html, /id="btn-more"[^>]+aria-expanded="false"/);
+    assert.match(
+        appJs,
+        /\['btn-copy', 'btn-clear', 'btn-compact', 'btn-view-mode', 'btn-shortcuts'\]\.forEach/
+    );
+    assert.match(appJs, /restoreChrome\(\)/);
+});

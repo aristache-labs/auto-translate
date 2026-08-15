@@ -1,13 +1,16 @@
+import {
+    commonPrefixLength,
+    nextRevealCount,
+    textLength,
+    visibleText,
+} from './adaptive-typewriter.js';
+
 /**
- * Transcript UI — continuous paragraph flow display with speaker diarization
- * 
- * Design: All text flows as one continuous paragraph.
- * - Translated text: white (primary color)
- * - Original text (pending translation): cyan/accent color  
- * - Provisional text (being recognized): dimmed
- * - Speaker labels: shown when speaker changes (e.g. "Speaker 1:")
- * - Language badges: shown when detected language changes (e.g. "🇯🇵 JA")
- * - Confidence: low-confidence segments highlighted
+ * Transcript UI — paired live interpretation with speaker diarization.
+ *
+ * Each finalized source segment and its translation share one visual row, so
+ * different line wrapping can never cause the two languages to drift apart.
+ * Provisional and finalized text use the same bounded typewriter treatment.
  */
 
 export class TranscriptUI {
@@ -17,6 +20,8 @@ export class TranscriptUI {
         this.maxChars = 1200;
         this.fontSize = 16;
         this.viewMode = 'single'; // 'single' or 'dual'
+        this.sourceLanguage = 'auto';
+        this.targetLanguage = 'vi';
 
         // Segments: each has { original, translation, status, speaker, language, confidence }
         this.segments = [];
@@ -28,6 +33,25 @@ export class TranscriptUI {
         // Source-side provisional (OpenAI Realtime: source ASR is separate from target).
         // Soniox leaves this empty; its provisionalText carries the source-language ASR.
         this.sourceProvisionalText = '';
+        this.provisionalVisible = 0;
+        this.sourceProvisionalVisible = 0;
+        this._provisionalStartedAt = 0;
+        this._sourceProvisionalStartedAt = 0;
+        this._animationFrame = null;
+        this._animationLastAt = 0;
+        this._tickTypewriter = this._tickTypewriter.bind(this);
+        this._motionPreference = typeof window !== 'undefined'
+            && typeof window.matchMedia === 'function'
+            ? window.matchMedia('(prefers-reduced-motion: reduce)')
+            : null;
+        this._reducedMotion = Boolean(this._motionPreference?.matches);
+        this._motionPreference?.addEventListener?.('change', (event) => {
+            this._reducedMotion = event.matches;
+            if (event.matches) {
+                this._stopTypewriter();
+                if (this._revealAllText()) this._render();
+            }
+        });
         // Provider hint — Soniox puts source-language in provisionalText; OpenAI
         // splits source/target streams; Qwen Live Flash emits target-only.
         // Backing field for the `provider` getter/setter below.
@@ -55,8 +79,25 @@ export class TranscriptUI {
     /**
      * Update display settings
      */
-    configure({ maxLines, showOriginal, fontSize, fontColor, viewMode }) {
+    configure({
+        maxLines,
+        showOriginal,
+        fontSize,
+        fontColor,
+        viewMode,
+        sourceLanguage,
+        targetLanguage,
+    }) {
+        let shouldRender = false;
         if (maxLines !== undefined) this.maxChars = maxLines * 160;
+        if (sourceLanguage !== undefined) {
+            this.sourceLanguage = sourceLanguage || 'auto';
+            shouldRender = true;
+        }
+        if (targetLanguage !== undefined) {
+            this.targetLanguage = targetLanguage || 'vi';
+            shouldRender = true;
+        }
         if (fontSize !== undefined) {
             this.fontSize = fontSize;
             this.container.style.setProperty('--transcript-font-size', `${fontSize}px`);
@@ -73,7 +114,9 @@ export class TranscriptUI {
                 overlay.classList.toggle('dual-view', wantsDual);
             }
             this._render();
+            shouldRender = false;
         }
+        if (shouldRender && this.contentEl) this._render();
     }
 
     /**
@@ -81,6 +124,7 @@ export class TranscriptUI {
      */
     addOriginal(text, speaker, language) {
         this._removeListening();
+        const createdAt = Date.now();
         const seg = {
             original: text,
             translation: null,
@@ -88,7 +132,11 @@ export class TranscriptUI {
             speaker: speaker || null,
             language: language || null,
             confidence: this.lastConfidence,
-            createdAt: Date.now(),
+            createdAt,
+            originalVisible: this._reducedMotion ? textLength(text) : 0,
+            translationVisible: 0,
+            originalAnimationStartedAt: createdAt,
+            translationAnimationStartedAt: 0,
         };
         this.segments.push(seg);
         // Also push a separate copy to sessionLog (never trimmed)
@@ -105,6 +153,7 @@ export class TranscriptUI {
         if (language) this.currentLanguage = language;
         this._cleanupStaleOriginals();
         this._render();
+        this._queueTypewriter();
     }
 
     /**
@@ -115,6 +164,8 @@ export class TranscriptUI {
         if (seg) {
             seg.translation = text;
             seg.status = 'translated';
+            seg.translationVisible = this._reducedMotion ? textLength(text) : 0;
+            seg.translationAnimationStartedAt = Date.now();
             // Mirror update in sessionLog: find matching entry by createdAt
             const logSeg = this.sessionLog.find(
                 s => s.status === 'original' && s.createdAt === seg.createdAt
@@ -124,17 +175,24 @@ export class TranscriptUI {
                 logSeg.status = 'translated';
             }
         } else {
+            const createdAt = Date.now();
             const newSeg = {
                 original: '',
                 translation: text,
                 status: 'translated',
                 speaker: null,
-                createdAt: Date.now(),
+                createdAt,
+                originalVisible: 0,
+                translationVisible: this._reducedMotion ? textLength(text) : 0,
+                originalAnimationStartedAt: 0,
+                translationAnimationStartedAt: createdAt,
             };
             this.segments.push(newSeg);
             this.sessionLog.push({ ...newSeg });
         }
+        this._announce(text);
         this._render();
+        this._queueTypewriter();
     }
 
     /**
@@ -142,10 +200,24 @@ export class TranscriptUI {
      */
     setProvisional(text, speaker, language) {
         this._removeListening();
-        this.provisionalText = text;
+        const nextText = text || '';
+        const previousVisible = this.provisionalVisible;
+        const wasCaughtUp = previousVisible >= textLength(this.provisionalText);
+        const stablePrefix = commonPrefixLength(this.provisionalText, nextText);
+        this.provisionalVisible = this._reducedMotion
+            ? textLength(nextText)
+            : Math.min(this.provisionalVisible, stablePrefix);
+        const revisionTouchedVisibleText = stablePrefix < previousVisible;
+        if (!nextText) {
+            this._provisionalStartedAt = 0;
+        } else if (!this._provisionalStartedAt || wasCaughtUp || revisionTouchedVisibleText) {
+            this._provisionalStartedAt = Date.now();
+        }
+        this.provisionalText = nextText;
         this.provisionalSpeaker = speaker || null;
         this.provisionalLanguage = language || null;
         this._render();
+        this._queueTypewriter();
     }
 
     /**
@@ -155,6 +227,8 @@ export class TranscriptUI {
         this.provisionalText = '';
         this.provisionalSpeaker = null;
         this.provisionalLanguage = null;
+        this.provisionalVisible = 0;
+        this._provisionalStartedAt = 0;
         this._render();
     }
 
@@ -164,12 +238,28 @@ export class TranscriptUI {
      */
     setSourceProvisional(text) {
         this._removeListening();
-        this.sourceProvisionalText = text || '';
+        const nextText = text || '';
+        const previousVisible = this.sourceProvisionalVisible;
+        const wasCaughtUp = previousVisible >= textLength(this.sourceProvisionalText);
+        const stablePrefix = commonPrefixLength(this.sourceProvisionalText, nextText);
+        this.sourceProvisionalVisible = this._reducedMotion
+            ? textLength(nextText)
+            : Math.min(this.sourceProvisionalVisible, stablePrefix);
+        const revisionTouchedVisibleText = stablePrefix < previousVisible;
+        if (!nextText) {
+            this._sourceProvisionalStartedAt = 0;
+        } else if (!this._sourceProvisionalStartedAt || wasCaughtUp || revisionTouchedVisibleText) {
+            this._sourceProvisionalStartedAt = Date.now();
+        }
+        this.sourceProvisionalText = nextText;
         this._render();
+        this._queueTypewriter();
     }
 
     clearSourceProvisional() {
         this.sourceProvisionalText = '';
+        this.sourceProvisionalVisible = 0;
+        this._sourceProvisionalStartedAt = 0;
         this._render();
     }
 
@@ -177,7 +267,7 @@ export class TranscriptUI {
      * Check if there is any content to display
      */
     hasContent() {
-        return this.segments.length > 0 || this.provisionalText ||
+        return this.segments.length > 0 || this.provisionalText || this.sourceProvisionalText ||
             !!this.container.querySelector('.listening-indicator');
     }
 
@@ -185,23 +275,26 @@ export class TranscriptUI {
      * Show placeholder state
      */
     showPlaceholder() {
+        this._stopTypewriter();
         this.container.innerHTML = `
-      <div class="transcript-placeholder">
-        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.4">
-          <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
-          <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
-          <line x1="12" y1="19" x2="12" y2="23"/>
-          <line x1="8" y1="23" x2="16" y2="23"/>
-        </svg>
-        <p>Press ▶ to start translating</p>
-        <p class="shortcut-hint">⌘ Enter</p>
-      </div>
-    `;
+            <div class="transcript-placeholder">
+                <div class="transcript-empty-mark" aria-hidden="true">
+                    <span></span><span></span><span></span><span></span><span></span>
+                </div>
+                <p class="transcript-empty-kicker">Live interpretation</p>
+                <h2>Speak naturally.<br><span>Translation follows.</span></h2>
+                <p class="transcript-empty-copy">Your original speech and translation stay aligned as the conversation unfolds.</p>
+                <span class="shortcut-hint">⌘ Enter&nbsp;&nbsp;to start</span>
+            </div>
+        `;
         this.segments = [];
         this.sessionLog = [];
         this.provisionalText = '';
         this.provisionalSpeaker = null;
         this.provisionalLanguage = null;
+        this.sourceProvisionalText = '';
+        this.provisionalVisible = 0;
+        this.sourceProvisionalVisible = 0;
         this.currentSpeaker = null;
         this.currentLanguage = null;
         this.lastConfidence = null;
@@ -226,7 +319,9 @@ export class TranscriptUI {
             <div class="listening-waves">
                 <span></span><span></span><span></span><span></span><span></span>
             </div>
-            <p>Listening...</p>
+            <p class="listening-kicker">Listening</p>
+            <strong>Start speaking when you're ready</strong>
+            <small>Live transcript will appear here</small>
         `;
         this.contentEl.appendChild(indicator);
     }
@@ -362,11 +457,15 @@ export class TranscriptUI {
      * sessionLog is NOT cleared — use clearSession() explicitly.
      */
     clear() {
+        this._stopTypewriter();
         this.container.innerHTML = '';
         this.segments = [];
         this.provisionalText = '';
         this.provisionalSpeaker = null;
         this.provisionalLanguage = null;
+        this.sourceProvisionalText = '';
+        this.provisionalVisible = 0;
+        this.sourceProvisionalVisible = 0;
         this.currentSpeaker = null;
         this.currentLanguage = null;
         this.lastConfidence = null;
@@ -396,6 +495,177 @@ export class TranscriptUI {
         if (indicator) indicator.remove();
     }
 
+    _announce(text) {
+        const announcer = document.getElementById('transcript-announcer');
+        if (announcer && text) announcer.textContent = text;
+    }
+
+    _queueTypewriter() {
+        if (this._reducedMotion || typeof requestAnimationFrame !== 'function') {
+            if (this._revealAllText()) this._render();
+            return;
+        }
+        if (this._animationFrame !== null) return;
+        this._animationLastAt = Date.now();
+        this._animationFrame = requestAnimationFrame(this._tickTypewriter);
+    }
+
+    _stopTypewriter() {
+        if (this._animationFrame !== null && typeof cancelAnimationFrame === 'function') {
+            cancelAnimationFrame(this._animationFrame);
+        }
+        this._animationFrame = null;
+        this._animationLastAt = 0;
+    }
+
+    _revealAllText() {
+        let changed = false;
+        for (const seg of this.segments) {
+            const originalTotal = textLength(seg.original || '');
+            const translationTotal = textLength(seg.translation || '');
+            if ((seg.originalVisible ?? originalTotal) !== originalTotal) changed = true;
+            if ((seg.translationVisible ?? translationTotal) !== translationTotal) changed = true;
+            seg.originalVisible = originalTotal;
+            seg.translationVisible = translationTotal;
+        }
+        const provisionalTotal = textLength(this.provisionalText);
+        const sourceProvisionalTotal = textLength(this.sourceProvisionalText);
+        if (this.provisionalVisible !== provisionalTotal) changed = true;
+        if (this.sourceProvisionalVisible !== sourceProvisionalTotal) changed = true;
+        this.provisionalVisible = provisionalTotal;
+        this.sourceProvisionalVisible = sourceProvisionalTotal;
+        return changed;
+    }
+
+    _animationTracks() {
+        const tracks = [];
+        this.segments.forEach((seg, index) => {
+            const originalTotal = textLength(seg.original || '');
+            const translationTotal = textLength(seg.translation || '');
+            if ((seg.originalVisible ?? originalTotal) < originalTotal) {
+                tracks.push({
+                    owner: seg,
+                    field: 'originalVisible',
+                    total: originalTotal,
+                    startedAt: seg.originalAnimationStartedAt || seg.createdAt,
+                    historical: index < this.segments.length - 1,
+                });
+            }
+            if ((seg.translationVisible ?? translationTotal) < translationTotal) {
+                tracks.push({
+                    owner: seg,
+                    field: 'translationVisible',
+                    total: translationTotal,
+                    startedAt: seg.translationAnimationStartedAt || seg.createdAt,
+                    historical: index < this.segments.length - 1,
+                });
+            }
+        });
+        if (this.provisionalVisible < textLength(this.provisionalText)) {
+            tracks.push({
+                owner: this,
+                field: 'provisionalVisible',
+                total: textLength(this.provisionalText),
+                startedAt: this._provisionalStartedAt || Date.now(),
+                historical: false,
+            });
+        }
+        if (this.sourceProvisionalVisible < textLength(this.sourceProvisionalText)) {
+            tracks.push({
+                owner: this,
+                field: 'sourceProvisionalVisible',
+                total: textLength(this.sourceProvisionalText),
+                startedAt: this._sourceProvisionalStartedAt || Date.now(),
+                historical: false,
+            });
+        }
+        return tracks;
+    }
+
+    _tickTypewriter() {
+        this._animationFrame = null;
+        const now = Date.now();
+        const elapsedMs = Math.max(8, now - (this._animationLastAt || now - 16));
+        this._animationLastAt = now;
+        const tracks = this._animationTracks();
+        let changed = false;
+
+        for (const track of tracks) {
+            const current = track.owner[track.field] || 0;
+            const next = track.historical
+                ? track.total
+                : nextRevealCount({
+                    visible: current,
+                    total: track.total,
+                    elapsedMs,
+                    ageMs: now - track.startedAt,
+                    queuedTracks: tracks.length,
+                });
+            if (next !== current) {
+                track.owner[track.field] = next;
+                changed = true;
+            }
+        }
+
+        if (changed) this._render();
+        if (this._animationTracks().length > 0) {
+            this._animationFrame = requestAnimationFrame(this._tickTypewriter);
+        } else {
+            this._animationLastAt = 0;
+        }
+    }
+
+    _animatedMarkup(text, visibleCount) {
+        const fullText = text || '';
+        const total = textLength(fullText);
+        const shown = visibleText(fullText, visibleCount ?? total);
+        const typing = textLength(shown) < total;
+        return `<span class="typewriter-text" aria-hidden="true">${this._esc(shown)}</span>${typing
+            ? '<span class="typewriter-caret" aria-hidden="true"></span>'
+            : ''}`;
+    }
+
+    _languageLabel(code, fallback) {
+        const value = (code || fallback || 'auto').trim();
+        return value.toLowerCase() === 'auto' ? 'AUTO' : value.toUpperCase();
+    }
+
+    _stageHeader({ single = false } = {}) {
+        const source = this._languageLabel(this.sourceLanguage, 'auto');
+        const target = this._languageLabel(this.targetLanguage, 'vi');
+        if (single) {
+            return `
+                <header class="transcript-stage-header single-header">
+                    <div class="stage-heading-cell target-heading">
+                        <span class="stage-eyebrow">Live translation</span>
+                        <span class="stage-language">${this._esc(target)}</span>
+                    </div>
+                </header>`;
+        }
+        return `
+            <header class="transcript-stage-header">
+                <div class="stage-heading-cell">
+                    <span class="stage-eyebrow">Original speech</span>
+                    <span class="stage-language">${this._esc(source)}</span>
+                </div>
+                <span class="stage-direction" aria-hidden="true">→</span>
+                <div class="stage-heading-cell target-heading">
+                    <span class="stage-eyebrow">Live translation</span>
+                    <span class="stage-language">${this._esc(target)}</span>
+                </div>
+            </header>`;
+    }
+
+    _pairMeta(seg) {
+        const speaker = seg.speaker
+            ? `<span class="speaker-label">Speaker ${this._esc(String(seg.speaker))}</span>`
+            : '';
+        const language = seg.language
+            ? `<span class="lang-badge">${this._esc(this._langEmoji(seg.language))}</span>`
+            : '';
+        return speaker || language ? `<div class="pair-meta">${speaker}${language}</div>` : '';
+    }
+
     _render() {
         this._ensureContent();
         this._trimSegments();
@@ -411,133 +681,121 @@ export class TranscriptUI {
     }
 
     _renderSingle() {
-        let html = '';
-        let lastRenderedSpeaker = null;
-        let lastRenderedLang = null;
+        const scrollState = this._getScrollState(this.container);
+        let rows = '';
+        const translated = this.segments.filter(seg => seg.status === 'translated' && seg.translation);
 
-        for (const seg of this.segments) {
-            // Speaker label
-            if (seg.speaker && seg.speaker !== lastRenderedSpeaker) {
-                html += `<span class="speaker-label">Speaker ${seg.speaker}:</span> `;
-                lastRenderedSpeaker = seg.speaker;
-            }
-
-            // Language badge
-            if (seg.language && seg.language !== lastRenderedLang) {
-                html += `<span class="lang-badge">${this._langEmoji(seg.language)}</span> `;
-                lastRenderedLang = seg.language;
-            }
-
-            if (seg.status === 'translated' && seg.translation) {
-                const confidenceClass = (seg.confidence !== null && seg.confidence < 0.7) ? ' low-confidence' : '';
-                html += `<div class="seg-block">`;
-                html += `<div class="seg-translated${confidenceClass}">${this._esc(seg.translation)}</div>`;
-                html += `</div>`;
-            }
-            // Skip 'original' segments in single mode — wait for translation
-        }
+        translated.forEach((seg, index) => {
+            const total = textLength(seg.translation);
+            const visible = seg.translationVisible ?? total;
+            const typing = visible < total;
+            const confidenceClass = (seg.confidence !== null && seg.confidence < 0.7)
+                ? ' low-confidence'
+                : '';
+            const currentClass = index === translated.length - 1 ? ' is-current' : '';
+            rows += `
+                <article class="translation-line${currentClass}${typing ? ' is-typing' : ''}">
+                    ${this._pairMeta(seg)}
+                    <p class="translation-copy${confidenceClass}" aria-label="${this._esc(seg.translation)}">
+                        ${this._animatedMarkup(seg.translation, visible)}
+                    </p>
+                </article>`;
+        });
 
         if (this.provisionalText) {
-            if (this.provisionalSpeaker && this.provisionalSpeaker !== lastRenderedSpeaker) {
-                html += `<span class="speaker-label">Speaker ${this.provisionalSpeaker}:</span> `;
-            }
-            if (this.provisionalLanguage && this.provisionalLanguage !== lastRenderedLang) {
-                html += `<span class="lang-badge">${this._langEmoji(this.provisionalLanguage)}</span> `;
-            }
-            // OpenAI splits source/target streams: when sourceProvisionalText is
-            // present, provisionalText is already the translated stream → render
-            // as bright translated text. Qwen Live Flash is translation-only —
-            // provisionalText is the target language too. Soniox uses
-            // provisionalText for source ASR → keep dim italic.
-            const isTargetStream = this.sourceProvisionalText || this.provider === 'qwen';
-            const cls = isTargetStream ? 'seg-translated' : 'seg-provisional';
-            html += `<div class="seg-block"><div class="${cls}">${this._esc(this.provisionalText)}</div></div>`;
-        }
-
-        this.contentEl.innerHTML = html;
-        // #transcript-content is the scroller since the activity-shell redesign
-        // (its parent #transcript-container is overflow:hidden). Scroll whichever
-        // actually overflows so this stays correct if the layout shifts again.
-        const parent = this.container.parentElement;
-        const scroller = (this.container.scrollHeight > this.container.clientHeight || !parent)
-            ? this.container : parent;
-        this._smartScroll(scroller);
-    }
-
-    _renderDual() {
-        // Save scroll state before re-render
-        const oldSrcPanel = this.contentEl.querySelector('.panel-source');
-        const oldTgtPanel = this.contentEl.querySelector('.panel-translation');
-        const srcScrollState = oldSrcPanel ? this._getScrollState(oldSrcPanel) : { nearBottom: true, scrollTop: 0 };
-        const tgtScrollState = oldTgtPanel ? this._getScrollState(oldTgtPanel) : { nearBottom: true, scrollTop: 0 };
-
-        let srcHtml = '';
-        let tgtHtml = '';
-        let lastSpeaker = null;
-        let lastLang = null;
-
-        for (const seg of this.segments) {
-            let speakerHtml = '';
-            if (seg.speaker && seg.speaker !== lastSpeaker) {
-                speakerHtml = `<div class="speaker-label">Speaker ${seg.speaker}:</div>`;
-                lastSpeaker = seg.speaker;
-            }
-
-            let langHtml = '';
-            if (seg.language && seg.language !== lastLang) {
-                langHtml = `<span class="lang-badge">${this._langEmoji(seg.language)}</span> `;
-                lastLang = seg.language;
-            }
-
-            if (seg.status === 'translated' && seg.translation) {
-                const confidenceClass = (seg.confidence !== null && seg.confidence < 0.7) ? ' low-confidence' : '';
-                srcHtml += speakerHtml + langHtml;
-                srcHtml += `<div class="seg-text">${this._esc(seg.original || '')}</div>`;
-                tgtHtml += speakerHtml ? '<div class="speaker-label">&nbsp;</div>' : '';
-                tgtHtml += `<div class="seg-text${confidenceClass}">${this._esc(seg.translation)}</div>`;
-            } else if (seg.status === 'original' && seg.original) {
-                srcHtml += speakerHtml + langHtml;
-                srcHtml += `<div class="seg-text pending">${this._esc(seg.original)}</div>`;
-                tgtHtml += speakerHtml ? '<div class="speaker-label">&nbsp;</div>' : '';
-                tgtHtml += `<div class="seg-text pending">...</div>`;
-            }
-        }
-
-        // Two providers feed provisional text differently:
-        // - Soniox: provisionalText is the source-language ASR (no separate source channel).
-        // - OpenAI Realtime: sourceProvisionalText is source ASR; provisionalText is target.
-        // Use explicit provider flag — checking !!sourceProvisionalText fails when
-        // whisper lags behind translation, dumping target deltas into the source panel.
-        if (this.sourceProvisionalText || this.provisionalText) {
-            const usingOpenAi = this.provider === 'openai';
-            const srcText = usingOpenAi ? this.sourceProvisionalText : this.provisionalText;
-            const tgtText = usingOpenAi ? this.provisionalText : '';
-            if (srcText) srcHtml += `<div class="seg-text pending">${this._esc(srcText)}</div>`;
-            tgtHtml += `<div class="seg-text pending">${tgtText ? this._esc(tgtText) : '...'}</div>`;
+            const isTargetStream = Boolean(this.sourceProvisionalText) || this.provider === 'qwen';
+            rows += `
+                <article class="translation-line provisional-line is-current is-typing">
+                    <div class="pair-meta">
+                        <span class="live-draft-label">${isTargetStream ? 'Translating' : 'Recognizing speech'}</span>
+                    </div>
+                    <p class="translation-copy ${isTargetStream ? '' : 'source-draft'}" aria-label="${this._esc(this.provisionalText)}">
+                        ${this._animatedMarkup(this.provisionalText, this.provisionalVisible)}
+                    </p>
+                </article>`;
         }
 
         this.contentEl.innerHTML = `
-            <div class="panel-source">${srcHtml}</div>
-            <div class="panel-translation">${tgtHtml}</div>
-        `;
+            <section class="transcript-stage transcript-stage-single" aria-label="Live translated transcript">
+                ${this._stageHeader({ single: true })}
+                <div class="translation-lines">${rows}</div>
+            </section>`;
+        this._restoreScroll(this.container, scrollState);
+    }
 
-        // Restore scroll: auto-scroll if was near bottom, otherwise keep position
-        const srcPanel = this.contentEl.querySelector('.panel-source');
-        const tgtPanel = this.contentEl.querySelector('.panel-translation');
-        if (srcPanel) {
-            if (srcScrollState.nearBottom) {
-                srcPanel.scrollTop = srcPanel.scrollHeight;
-            } else {
-                srcPanel.scrollTop = srcScrollState.scrollTop;
-            }
+    _renderDual() {
+        const scrollState = this._getScrollState(this.container);
+        let pairs = '';
+
+        this.segments.forEach((seg, index) => {
+            const originalTotal = textLength(seg.original || '');
+            const translationTotal = textLength(seg.translation || '');
+            const originalVisible = seg.originalVisible ?? originalTotal;
+            const translationVisible = seg.translationVisible ?? translationTotal;
+            const sourceTyping = originalVisible < originalTotal;
+            const targetTyping = translationVisible < translationTotal;
+            const isPending = seg.status === 'original' || !seg.translation;
+            const confidenceClass = (seg.confidence !== null && seg.confidence < 0.7)
+                ? ' low-confidence'
+                : '';
+            const isCurrent = index === this.segments.length - 1;
+            pairs += `
+                <article class="transcript-pair${isCurrent ? ' is-current' : ''}${sourceTyping || targetTyping ? ' is-typing' : ''}">
+                    <div class="pair-cell pair-source">
+                        ${this._pairMeta(seg)}
+                        <p class="pair-copy source-copy" aria-label="${this._esc(seg.original || '')}">
+                            ${seg.original
+                                ? this._animatedMarkup(seg.original, originalVisible)
+                                : '<span class="empty-copy" aria-hidden="true">Source unavailable</span>'}
+                        </p>
+                    </div>
+                    <div class="pair-direction" aria-hidden="true"><span>→</span></div>
+                    <div class="pair-cell pair-target">
+                        <div class="pair-meta target-meta">
+                            <span class="${isPending ? 'translating-label' : 'translated-label'}">${isPending ? 'Translating' : 'Translated'}</span>
+                        </div>
+                        <p class="pair-copy target-copy${confidenceClass}" aria-label="${this._esc(seg.translation || 'Translation pending')}">
+                            ${isPending
+                                ? '<span class="translation-pending" aria-hidden="true"><i></i><i></i><i></i></span>'
+                                : this._animatedMarkup(seg.translation, translationVisible)}
+                        </p>
+                    </div>
+                </article>`;
+        });
+
+        if (this.sourceProvisionalText || this.provisionalText) {
+            const usingOpenAi = this.provider === 'openai';
+            const sourceText = usingOpenAi ? this.sourceProvisionalText : this.provisionalText;
+            const sourceVisible = usingOpenAi ? this.sourceProvisionalVisible : this.provisionalVisible;
+            const targetText = usingOpenAi ? this.provisionalText : '';
+            pairs += `
+                <article class="transcript-pair provisional-pair is-current is-typing">
+                    <div class="pair-cell pair-source">
+                        <div class="pair-meta"><span class="live-draft-label">Listening live</span></div>
+                        <p class="pair-copy source-copy source-draft" aria-label="${this._esc(sourceText || 'Listening')}">
+                            ${sourceText
+                                ? this._animatedMarkup(sourceText, sourceVisible)
+                                : '<span class="translation-pending" aria-hidden="true"><i></i><i></i><i></i></span>'}
+                        </p>
+                    </div>
+                    <div class="pair-direction" aria-hidden="true"><span>→</span></div>
+                    <div class="pair-cell pair-target">
+                        <div class="pair-meta target-meta"><span class="translating-label">Translating</span></div>
+                        <p class="pair-copy target-copy" aria-label="${this._esc(targetText || 'Translation pending')}">
+                            ${targetText
+                                ? this._animatedMarkup(targetText, this.provisionalVisible)
+                                : '<span class="translation-pending" aria-hidden="true"><i></i><i></i><i></i></span>'}
+                        </p>
+                    </div>
+                </article>`;
         }
-        if (tgtPanel) {
-            if (tgtScrollState.nearBottom) {
-                tgtPanel.scrollTop = tgtPanel.scrollHeight;
-            } else {
-                tgtPanel.scrollTop = tgtScrollState.scrollTop;
-            }
-        }
+
+        this.contentEl.innerHTML = `
+            <section class="transcript-stage" aria-label="Live original and translated transcript">
+                ${this._stageHeader()}
+                <div class="transcript-pairs">${pairs}</div>
+            </section>`;
+        this._restoreScroll(this.container, scrollState);
     }
 
     _getScrollState(el) {
@@ -545,6 +803,15 @@ export class TranscriptUI {
             nearBottom: (el.scrollHeight - el.scrollTop - el.clientHeight) < 100,
             scrollTop: el.scrollTop
         };
+    }
+
+    _restoreScroll(el, state) {
+        if (!el || !state) return;
+        if (state.nearBottom) {
+            el.scrollTop = el.scrollHeight;
+        } else {
+            el.scrollTop = state.scrollTop;
+        }
     }
 
     _smartScroll(el) {

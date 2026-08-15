@@ -41,6 +41,7 @@ import {
 import {
     initShell, setActivity, getActivity, setLiveBadge, bindMenu, initWindowModes,
     startAutoHideWatch, stopAutoHideWatch, toggleManualCompact, isAutoHideEnabled, setAutoHideEnabled,
+    revealChrome, restoreChrome,
 } from './ui-shell.js';
 
 const { invoke, Channel } = window.__TAURI__.core;
@@ -344,6 +345,12 @@ class App {
         // Compact mode button
         document.getElementById('btn-compact').addEventListener('click', () => {
             this._toggleCompact();
+        });
+
+        // Always-available escape hatch when Compact/auto-hide conceals the toolbar.
+        document.getElementById('btn-restore-toolbar')?.addEventListener('click', () => {
+            restoreChrome();
+            this.isCompact = false;
         });
 
         // View mode toggle (dual panel)
@@ -1240,6 +1247,8 @@ class App {
                 maxLines: settings.max_lines || 5,
                 showOriginal: settings.show_original !== false,
                 fontSize: settings.font_size || 16,
+                sourceLanguage: settings.source_language || 'auto',
+                targetLanguage: settings.target_language || 'vi',
             });
         }
 
@@ -1820,8 +1829,9 @@ class App {
         document.addEventListener('activity-changed', (e) => this._onActivityChanged(e.detail));
         // Overflow menu (⋯) in the Live action row
         this._moreMenu = bindMenu('btn-more', 'more-menu');
-        // Menu items that navigate/close: shut the menu after action
-        ['btn-copy', 'btn-clear', 'btn-compact', 'btn-shortcuts'].forEach((id) => {
+        // Close after navigate/destructive/layout actions (split stays reopenable
+        // via ⋯ — dual-view no longer clips the action row).
+        ['btn-copy', 'btn-clear', 'btn-compact', 'btn-view-mode', 'btn-shortcuts'].forEach((id) => {
             document.getElementById(id)?.addEventListener('click', () => this._moreMenu.close());
         });
         // Shortcut sheet (⋯ menu + `?` key; Esc/click-outside closes)
@@ -3172,6 +3182,9 @@ class App {
         const isDual = this.transcriptUI.viewMode === 'dual';
         const newMode = isDual ? 'single' : 'dual';
         this.transcriptUI.configure({ viewMode: newMode });
+        // The split control lives inside the overflow menu. Keep the action row
+        // visible after the menu closes instead of letting an old idle timer win.
+        revealChrome();
         const btn = document.getElementById('btn-view-mode');
         if (btn) btn.classList.toggle('active', newMode === 'dual');
     }

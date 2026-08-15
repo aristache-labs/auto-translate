@@ -7,7 +7,7 @@
   <title>My Translator</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Manrope:wght@500;600;700;800&family=Noto+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="styles/main.css" />
 </head>
 
@@ -17,7 +17,7 @@
     <!-- Drag Region (title bar area) -->
     <div id="drag-region" data-tauri-drag-region>
       <div class="control-bar" data-tauri-drag-region>
-        <button id="btn-settings" class="icon-btn" title="Settings">
+        <button id="btn-settings" class="icon-btn" title="Settings" aria-label="Open settings">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="3" />
             <path
@@ -80,7 +80,7 @@
             <span class="engine-pill-label">Local MLX</span>
           </button>
         </div>
-        <div class="status-area">
+        <div class="status-area" role="status" aria-live="polite">
           <span id="status-indicator" class="status-dot disconnected"></span>
           <span id="status-text" class="status-text">Ready</span>
         </div>
@@ -92,18 +92,18 @@
         </select>
       </div>
 
-      <div id="transcript-content" data-tauri-drag-region>
+      <div id="transcript-content" role="region" aria-label="Live translation transcript" data-tauri-drag-region>
         <div class="transcript-placeholder">
-          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
-            opacity="0.4">
-            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
-            <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-            <line x1="12" y1="19" x2="12" y2="23" />
-            <line x1="8" y1="23" x2="16" y2="23" />
-          </svg>
-          <p>Press ▶ to start translating</p>
+          <div class="transcript-empty-mark" aria-hidden="true">
+            <span></span><span></span><span></span><span></span><span></span>
+          </div>
+          <p class="transcript-empty-kicker">Live interpretation</p>
+          <h2>Speak naturally.<br><span>Translation follows.</span></h2>
+          <p class="transcript-empty-copy">Your original speech and translation stay aligned as the conversation unfolds.</p>
+          <span class="shortcut-hint">⌘ Enter&nbsp;&nbsp;to start</span>
         </div>
       </div>
+      <div id="transcript-announcer" class="visually-hidden" aria-live="polite" aria-atomic="true"></div>
 
       <!-- Live action row: primary start/stop + pause + TTS + overflow menu -->
       <div class="live-action-row">
@@ -117,7 +117,7 @@
           <span id="btn-start-label">Start</span>
         </button>
 
-        <button id="btn-pause" class="action-btn" title="Pause (keep session)" disabled>
+        <button id="btn-pause" class="action-btn" title="Pause (keep session)" aria-label="Pause translation" disabled>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
             <rect x="6" y="4" width="4" height="16" rx="1" />
             <rect x="14" y="4" width="4" height="16" rx="1" />
@@ -137,12 +137,13 @@
         </button>
 
         <div class="more-menu-wrap">
-          <button id="btn-more" class="icon-btn" title="Add">
+          <button id="btn-more" class="icon-btn" title="More transcript options" aria-label="More transcript options"
+            aria-haspopup="dialog" aria-expanded="false" aria-controls="more-menu">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
               <circle cx="5" cy="12" r="2" /><circle cx="12" cy="12" r="2" /><circle cx="19" cy="12" r="2" />
             </svg>
           </button>
-          <div id="more-menu" class="more-menu" style="display:none">
+          <div id="more-menu" class="more-menu" role="dialog" aria-label="Transcript options" style="display:none">
             <button id="btn-copy" class="more-menu-item" type="button">📋 Copy transcript</button>
             <button id="btn-clear" class="more-menu-item" type="button">🗑 Clear Transcript</button>
             <div class="more-menu-sep"></div>
@@ -172,6 +173,14 @@
           </div>
         </div>
       </div>
+
+      <button id="btn-restore-toolbar" class="toolbar-restore-btn" type="button"
+        title="Show translation controls" aria-label="Show translation controls">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
+          <path d="m6 15 6-6 6 6" />
+        </svg>
+        <span>Show controls</span>
+      </button>
 
       <!-- Engine picker — shown before the first session each launch.
            Two cards because OpenAI Realtime is structurally different from

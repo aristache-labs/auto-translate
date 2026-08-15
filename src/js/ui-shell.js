@@ -113,6 +113,21 @@ export function toggleManualCompact() {
     return manualCompact;
 }
 
+/** Keep controls visible after an in-menu layout action unless Compact is manual. */
+export function revealChrome() {
+    if (manualCompact) return false;
+    setChromeHidden(false);
+    if (autoWatching) armIdleTimer();
+    return true;
+}
+
+/** Guaranteed escape hatch for both manual Compact and automatic hiding. */
+export function restoreChrome() {
+    manualCompact = false;
+    setChromeHidden(false);
+    if (autoWatching) armIdleTimer();
+}
+
 export function isAutoHideEnabled() {
     return autoHideEnabled;
 }
@@ -132,18 +147,28 @@ export function bindMenu(triggerId, menuId) {
     const menu = document.getElementById(menuId);
     if (!trigger || !menu) return { close: () => {} };
 
-    const close = () => { menu.style.display = 'none'; };
+    trigger.setAttribute('aria-expanded', 'false');
+    const close = ({ restoreFocus = false } = {}) => {
+        menu.style.display = 'none';
+        trigger.setAttribute('aria-expanded', 'false');
+        if (restoreFocus) trigger.focus?.();
+    };
     const isOpen = () => menu.style.display !== 'none';
 
     trigger.addEventListener('click', (e) => {
         e.stopPropagation();
-        menu.style.display = isOpen() ? 'none' : '';
+        if (isOpen()) {
+            close();
+        } else {
+            menu.style.display = '';
+            trigger.setAttribute('aria-expanded', 'true');
+        }
     });
     document.addEventListener('click', (e) => {
         if (isOpen() && !menu.contains(e.target)) close();
     });
     document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && isOpen()) close();
+        if (e.key === 'Escape' && isOpen()) close({ restoreFocus: true });
     });
     return { close };
 }
@@ -158,27 +183,62 @@ export function anyMenuOpen() {
  * Sizes persist per-mode in localStorage (same store the app already uses
  * for window_state), so no backend settings round-trip is needed. */
 
+const OVERLAY_DEFAULT = { w: 520, h: 420 };
 const EXPANDED_DEFAULT = { w: 900, h: 640 };
+const SIZE_MIN = { w: 360, h: 240 };
+const SIZE_MAX = { w: 1600, h: 1200 };
 
 let appWindowRef = null;
 let windowMode = 'overlay';
 let applyingMode = false; // guard: programmatic setSize must not overwrite saved sizes
+let applyingModeTimer = null;
 let resizeSaveTimer = null;
 
 export function getWindowMode() {
     return windowMode;
 }
 
+function clampSize(size) {
+    if (!size || typeof size.w !== 'number' || typeof size.h !== 'number') return null;
+    const w = Math.round(size.w);
+    const h = Math.round(size.h);
+    if (!Number.isFinite(w) || !Number.isFinite(h)) return null;
+    return {
+        w: Math.min(SIZE_MAX.w, Math.max(SIZE_MIN.w, w)),
+        h: Math.min(SIZE_MAX.h, Math.max(SIZE_MIN.h, h)),
+    };
+}
+
 async function currentLogicalSize() {
     const factor = await appWindowRef.scaleFactor();
-    const size = await appWindowRef.innerSize();
-    return { w: Math.round(size.width / factor), h: Math.round(size.height / factor) };
+    const physical = await appWindowRef.innerSize();
+    // Prefer Tauri's DPI helper when available (avoids Retina double-scale bugs)
+    if (typeof physical.toLogical === 'function') {
+        const logical = physical.toLogical(factor);
+        return clampSize({ w: logical.width, h: logical.height });
+    }
+    return clampSize({
+        w: physical.width / factor,
+        h: physical.height / factor,
+    });
 }
 
 async function saveSizeForMode(mode) {
+    if (applyingMode) return;
     try {
-        localStorage.setItem(`win_size_${mode}`, JSON.stringify(await currentLogicalSize()));
+        const size = await currentLogicalSize();
+        if (!size) return;
+        localStorage.setItem(`win_size_${mode}`, JSON.stringify(size));
     } catch { /* size save is best-effort */ }
+}
+
+function beginApplyingMode() {
+    applyingMode = true;
+    clearTimeout(applyingModeTimer);
+    // onResized often fires after setSize resolves — keep the guard briefly
+    applyingModeTimer = setTimeout(() => {
+        applyingMode = false;
+    }, 400);
 }
 
 export async function applyWindowMode(mode) {
@@ -191,15 +251,12 @@ export async function applyWindowMode(mode) {
     document.body.classList.toggle('expanded', mode === 'expanded');
 
     let target = null;
-    try { target = JSON.parse(localStorage.getItem(`win_size_${mode}`) || 'null'); } catch { }
-    if (!target && mode === 'expanded') target = EXPANDED_DEFAULT;
-    if (target) {
-        applyingMode = true;
-        try { await appWindowRef.setSize(new LogicalSize(target.w, target.h)); } catch { }
-        applyingMode = false;
-    }
-    const btn = document.getElementById('btn-window-mode');
-    if (btn) btn.title = mode === 'expanded' ? 'Thu về overlay nhỏ' : 'Mở rộng cửa sổ';
+    try { target = clampSize(JSON.parse(localStorage.getItem(`win_size_${mode}`) || 'null')); } catch { }
+    if (!target) target = mode === 'expanded' ? EXPANDED_DEFAULT : OVERLAY_DEFAULT;
+    beginApplyingMode();
+    try {
+        await appWindowRef.setSize(new LogicalSize(target.w, target.h));
+    } catch { /* ignore */ }
 }
 
 export async function toggleWindowMode() {
@@ -220,5 +277,12 @@ export async function initWindowModes(appWindow) {
     } catch { /* onResized unavailable — sizes just won't persist */ }
 
     const saved = localStorage.getItem('window_mode');
-    if (saved === 'expanded') await applyWindowMode('expanded');
+    if (saved === 'expanded') {
+        await applyWindowMode('expanded');
+    } else {
+        windowMode = 'overlay';
+        document.body.classList.remove('expanded');
+    }
+    const btn = document.getElementById('btn-window-mode');
+    if (btn) btn.title = windowMode === 'expanded' ? 'Shrink to overlay' : 'Expand window';
 }
