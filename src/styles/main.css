@@ -1495,10 +1495,11 @@ input[type="range"]::-webkit-slider-thumb:hover {
 /* ─── Toast Notification ───────────────────────────────── */
 .toast {
   position: fixed;
-  bottom: 16px;
-  left: 50%;
-  transform: translateX(-50%) translateY(50px);
-  padding: 8px 16px;
+  top: calc(var(--control-bar-height) + 60px);
+  right: 12px;
+  left: auto;
+  transform: translateX(0) translateY(-50px);
+  padding: 8px 14px;
   border-radius: var(--radius-sm);
   font-size: 12px;
   font-weight: 500;
@@ -1506,15 +1507,15 @@ input[type="range"]::-webkit-slider-thumb:hover {
   opacity: 0;
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   z-index: 1000;
-  max-width: 90%;
-  text-align: center;
+  max-width: 360px;
+  text-align: left;
   line-height: 1.4;
   backdrop-filter: blur(10px);
 }
 
 .toast.show {
   opacity: 1;
-  transform: translateX(-50%) translateY(0);
+  transform: translateX(0) translateY(0);
 }
 
 .toast.success {
