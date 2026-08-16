@@ -2225,12 +2225,14 @@ class App {
     _showEnginePicker() {
         const picker = document.getElementById('engine-picker');
         if (picker) picker.style.display = '';
+        document.body.classList.add('app-picker-active');
     }
 
     _hideEnginePicker() {
         const picker = document.getElementById('engine-picker');
         if (picker) picker.style.display = 'none';
         this._enginePickerDismissed = true;
+        document.body.classList.remove('app-picker-active');
     }
 
     _maybeShowEnginePicker() {

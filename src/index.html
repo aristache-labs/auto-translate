@@ -190,12 +190,30 @@
         <span>Show controls</span>
       </button>
 
-      <!-- Engine picker — shown before the first session each launch.
-           Two cards because OpenAI Realtime is structurally different from
-           Soniox/Local (text+voice fused, no two-way, no custom TTS). -->
+      <!-- Engine picker — shown before the first session each launch. -->
       <div id="engine-picker" class="engine-picker" style="display:none">
         <p class="engine-picker-title">Choose translation mode</p>
         <div class="engine-cards">
+          <button class="engine-card" data-engine-class="automatic" type="button">
+            <div class="engine-card-icon">🤖</div>
+            <div class="engine-card-name">Automatic</div>
+            <div class="engine-card-meta">AssemblyAI → Groq → Cloudflare</div>
+            <ul class="engine-card-feats">
+              <li>Best STT first</li>
+              <li>Auto-fallback chain</li>
+              <li>Requires AssemblyAI key</li>
+            </ul>
+          </button>
+          <button class="engine-card" data-engine-class="assemblyai" type="button">
+            <div class="engine-card-icon">🎙️</div>
+            <div class="engine-card-name">AssemblyAI</div>
+            <div class="engine-card-meta">Streaming v3 · Low latency</div>
+            <ul class="engine-card-feats">
+              <li>Real-time turns</li>
+              <li>Speaker labels</li>
+              <li>EU/US regions</li>
+            </ul>
+          </button>
           <button class="engine-card" data-engine-class="groq" type="button">
             <div class="engine-card-icon">⚡</div>
             <div class="engine-card-name">Groq</div>
@@ -209,10 +227,10 @@
           <button class="engine-card" data-engine-class="cloudflare" type="button">
             <div class="engine-card-icon">☁️</div>
             <div class="engine-card-name">Cloudflare</div>
-            <div class="engine-card-meta">Whisper v3 · Fallback/Primary</div>
+            <div class="engine-card-meta">Whisper v3 · Workers AI</div>
             <ul class="engine-card-feats">
               <li>99+ languages</li>
-              <li>Workers AI</li>
+              <li>Account API token</li>
               <li>Reliable backup</li>
             </ul>
           </button>

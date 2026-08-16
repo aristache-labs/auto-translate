@@ -3091,6 +3091,11 @@ body.expanded #transcript-content {
   backdrop-filter: blur(18px);
 }
 
+.app-picker-active .live-action-row,
+.app-picker-active .toolbar-restore-btn {
+  display: none !important;
+}
+
 /* A compact session must always have a visible, keyboard-focusable way back. */
 .toolbar-restore-btn {
   position: absolute;
