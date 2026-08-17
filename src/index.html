@@ -409,26 +409,6 @@
           <p class="hint" id="hint-llm-automatic">Engine above is STT. Translation uses Azure → Gemini → Cloudflare → Ollama independently. Groq is STT-only.</p>
         </div>
 
-        <div class="settings-section" id="section-openrouter-key" style="display:none">
-          <span class="field-label">
-            OpenRouter API Key
-            <span id="key-status-openrouter" class="key-status"></span>
-          </span>
-          <div class="input-group">
-            <input type="password" id="input-openrouter-key" placeholder="sk-or-..." autocomplete="off" />
-            <button id="btn-toggle-openrouter-key" class="icon-btn small" title="Show/Hide">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" />
-              </svg>
-            </button>
-            <button id="btn-test-openrouter" class="btn-secondary small" title="Test connection">Test</button>
-          </div>
-          <p class="hint">Get key at <a href="#" id="link-openrouter">openrouter.ai/keys</a></p>
-          <span class="field-label" style="margin-top:10px">OpenRouter model</span>
-          <input type="text" id="input-openrouter-llm-model" placeholder="openai/gpt-4o-mini" autocomplete="off" spellcheck="false" />
-          <p class="hint">Any OpenRouter chat model id, e.g. openai/gpt-4o-mini. Embedding models will not translate.</p>
-        </div>
-
         <div class="settings-section" id="section-assemblyai-key">
           <div class="field-row" style="align-items: center; justify-content: space-between;">
             <span class="field-label">

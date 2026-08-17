@@ -41,8 +41,6 @@ const FULL_SETTINGS = {
   cloudflare_api_token: 'tok',
   cloudflare_llm_model: '@cf/meta/llama-3.1-8b-instruct-fp8-fast',
   local_stt_enabled: true,
-  openrouter_enabled: true,
-  openrouter_api_key: 'sk-or-123',
   azure_translator_enabled: true,
   azure_translator_key: 'az',
   gemini_enabled: true,
@@ -53,7 +51,7 @@ const FULL_SETTINGS = {
 };
 
 test('classifyError categorizes HTTP status codes properly', () => {
-  assert.equal(classifyError(429, '{}', 'openrouter'), ERROR_TYPES.QUOTA);
+  assert.equal(classifyError(429, '{}', 'gemini'), ERROR_TYPES.QUOTA);
   assert.equal(classifyError(null, 'Quota exhausted: daily limit', 'groq'), ERROR_TYPES.QUOTA);
   assert.equal(classifyError(null, 'Rate limit exceeded', 'gemini'), ERROR_TYPES.QUOTA);
   assert.equal(classifyError(408, '{}', 'groq'), ERROR_TYPES.TEMPORARY);
@@ -61,7 +59,7 @@ test('classifyError categorizes HTTP status codes properly', () => {
   assert.equal(classifyError(503, '{}', 'cloudflare'), ERROR_TYPES.TEMPORARY);
   assert.equal(classifyError(401, '{}', 'gemini'), ERROR_TYPES.CONFIG);
   assert.equal(classifyError(403, '{}', 'azure'), ERROR_TYPES.CONFIG);
-  assert.equal(classifyError(404, '{}', 'openrouter'), ERROR_TYPES.CONFIG);
+  assert.equal(classifyError(404, '{}', 'azure'), ERROR_TYPES.CONFIG);
   assert.equal(classifyError(410, '{}', 'groq'), ERROR_TYPES.CONFIG);
   assert.equal(classifyError(null, '{}', 'local'), ERROR_TYPES.UNSUPPORTED);
 });
@@ -91,7 +89,7 @@ test('expired cooldown allows one half-open recovery probe', () => {
   resetAllCircuitBreakers();
   let t = 1_000;
   setNowFn(() => t);
-  const key = breakerKey('translation', 'openrouter');
+  const key = breakerKey('translation', 'azure');
   openCircuitBreaker(key, 2_000);
   assert.equal(isCircuitBreakerOpen(key), true);
   t = 2_500;
@@ -106,7 +104,7 @@ test('expired cooldown allows one half-open recovery probe', () => {
 
 test('sanitizeErrorMessage strips keys, tokens, and auth headers', () => {
   const msg = 'Error with key="sk-1234567890abcdef" authorization=Bearer secretToken';
-  const sanitized = sanitizeErrorMessage(msg, 'openrouter');
+  const sanitized = sanitizeErrorMessage(msg, 'azure');
   assert.equal(sanitized.includes('sk-1234567890abcdef'), false);
   assert.equal(sanitized.includes('secretToken'), false);
   const longMsg = 'A'.repeat(500);
@@ -114,8 +112,8 @@ test('sanitizeErrorMessage strips keys, tokens, and auth headers', () => {
 });
 
 test('formatErrorNotification provides clear user messages', () => {
-  const quotaMsg = formatErrorNotification('openrouter', ERROR_TYPES.QUOTA);
-  assert.ok(quotaMsg.includes('OpenRouter') && quotaMsg.includes('quota'));
+  const quotaMsg = formatErrorNotification('gemini', ERROR_TYPES.QUOTA);
+  assert.ok(quotaMsg.includes('Gemini') && quotaMsg.includes('quota'));
   const retryMsg = formatErrorNotification('groq', ERROR_TYPES.TEMPORARY, true);
   assert.ok(retryMsg.includes('Retrying'));
 });
@@ -292,7 +290,7 @@ test('parseProviderError never keeps bearer tokens', () => {
 test('HTTP 404 translation errors open the config breaker', () => {
   resetAllCircuitBreakers();
   const parsed = parseProviderError({
-    provider: 'openrouter',
+    provider: 'azure',
     capability: 'translation',
     kind: 'temporary',
     status: 404,
@@ -300,7 +298,7 @@ test('HTTP 404 translation errors open the config breaker', () => {
   });
   assert.equal(parsed.kind, ERROR_TYPES.CONFIG);
   applyProviderError(parsed);
-  assert.equal(isCircuitBreakerOpen(breakerKey('translation', 'openrouter')), true);
+  assert.equal(isCircuitBreakerOpen(breakerKey('translation', 'azure')), true);
   resetAllCircuitBreakers();
 });
 

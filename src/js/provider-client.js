@@ -40,9 +40,7 @@ export function normalizeClientConfig(config = {}) {
         targetLanguage: config.targetLanguage || config.targetLang || 'vi',
         sttModel: config.sttModel || config.groqSttModel || config.cloudflareSttModel || '',
         llmModel: config.llmModel || config.groqLlmModel || config.cloudflareLlmModel || '',
-        llmProvider: config.llmProvider || 'engine',
-        openrouterApiKey: config.openrouterApiKey || '',
-        openrouterModel: config.openrouterModel || 'openai/gpt-4o-mini',
+        llmProvider: config.llmProvider || 'automatic',
     };
 }
 

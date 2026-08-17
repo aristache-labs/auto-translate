@@ -5,7 +5,6 @@ function migrateJsDefaults(saved) {
     const defaults = {
         groq_enabled: true,
         cloudflare_enabled: true,
-        openrouter_enabled: true,
         assemblyai_enabled: true,
         assemblyai_api_key: '',
         assemblyai_region: 'global',

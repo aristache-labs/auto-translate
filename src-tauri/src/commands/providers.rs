@@ -18,9 +18,6 @@ const GROQ_CHAT_MODEL: &str = "openai/gpt-oss-120b";
 
 const CF_WHISPER_MODEL: &str = "@cf/openai/whisper-large-v3-turbo";
 const CF_LLM_MODEL: &str = "@cf/meta/llama-3.1-8b-instruct-fp8-fast";
-const OPENROUTER_CHAT_URL: &str = "https://openrouter.ai/api/v1/chat/completions";
-const OPENROUTER_MODELS_URL: &str = "https://openrouter.ai/api/v1/models";
-const OPENROUTER_CHAT_MODEL: &str = "openai/gpt-4o-mini";
 const CF_TOKEN_VERIFY_URL: &str = "https://api.cloudflare.com/client/v4/user/tokens/verify";
 const GEMINI_DEFAULT_MODEL: &str = "gemini-3.1-flash-lite";
 const GEMINI_MODELS_BASE: &str = "https://generativelanguage.googleapis.com/v1beta/models";
@@ -101,10 +98,6 @@ pub fn pcm_to_wav(pcm: &[u8]) -> Vec<u8> {
     wav.extend_from_slice(&data_len.to_le_bytes());
     wav.extend_from_slice(pcm);
     wav
-}
-
-fn wants_openrouter(llm_provider: &Option<String>) -> bool {
-    matches!(llm_provider.as_deref(), Some("openrouter"))
 }
 
 fn resolve_model(provided: Option<&str>, fallback: &str) -> String {
@@ -514,51 +507,6 @@ async fn cloudflare_translate(
     Ok(cloudflare_translated_text(&parsed))
 }
 
-async fn openrouter_translate(
-    api_key: &str,
-    source_language: &str,
-    target_language: &str,
-    text: &str,
-    llm_model: &str,
-) -> Result<String, String> {
-    if text.is_empty() {
-        return Ok(String::new());
-    }
-    if source_language == target_language {
-        return Ok(text.to_string());
-    }
-    let payload = serde_json::json!({
-        "model": llm_model,
-        "temperature": 0.2,
-        "stream": false,
-        "messages": [
-            {"role": "system", "content": translation_system_prompt(target_language)},
-            {"role": "user", "content": translation_prompt(source_language, target_language, text)}
-        ]
-    });
-    let resp = http()
-        .post(OPENROUTER_CHAT_URL)
-        .bearer_auth(api_key)
-        .header("Content-Type", "application/json")
-        .json(&payload)
-        .send()
-        .await
-        .map_err(|e| format!("OpenRouter request failed: {e}"))?;
-    let status = resp.status();
-    let body = resp.text().await.map_err(|e| e.to_string())?;
-    if !status.is_success() {
-        return Err(http_error_status(status, &body));
-    }
-    let parsed: serde_json::Value =
-        serde_json::from_str(&body).map_err(|e| format!("OpenRouter JSON: {e}"))?;
-    Ok(parsed
-        .pointer("/choices/0/message/content")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .trim()
-        .to_string())
-}
-
 // Azure Translator — maps application language codes to Azure-supported codes
 fn map_language_to_azure(lang_code: &str) -> Option<String> {
     match lang_code.to_lowercase().as_str() {
@@ -948,9 +896,6 @@ pub async fn groq_transcribe_and_translate(
     api_key: String,
     stt_model: Option<String>,
     llm_model: Option<String>,
-    llm_provider: Option<String>,
-    openrouter_api_key: Option<String>,
-    openrouter_model: Option<String>,
 ) -> Result<ProviderResult, String> {
     if api_key.trim().is_empty() {
         return Err("Groq API key is required".into());
@@ -962,45 +907,14 @@ pub async fn groq_transcribe_and_translate(
     let llm = resolve_groq_llm(llm_model.as_deref());
     let wav = pcm_to_wav(&pcm);
     let source_text = groq_transcribe(&api_key, wav, &source_language, &stt).await?;
-    // Keep Groq STT; if OpenRouter fails (e.g. free-tier 429), fall back to Groq LLM
-    let translated_text = if wants_openrouter(&llm_provider) {
-        let or_key = openrouter_api_key.unwrap_or_default();
-        if or_key.trim().is_empty() {
-            return Err("OpenRouter API key is required".into());
-        }
-        let or_model = resolve_model(openrouter_model.as_deref(), OPENROUTER_CHAT_MODEL);
-        match openrouter_translate(
-            &or_key,
-            &source_language,
-            &target_language,
-            &source_text,
-            &or_model,
-        )
-        .await
-        {
-            Ok(t) => t,
-            Err(e) => {
-                eprintln!("[provider] OpenRouter failed, falling back to Groq LLM: {e}");
-                groq_translate(
-                    &api_key,
-                    &source_language,
-                    &target_language,
-                    &source_text,
-                    &llm,
-                )
-                .await?
-            }
-        }
-    } else {
-        groq_translate(
-            &api_key,
-            &source_language,
-            &target_language,
-            &source_text,
-            &llm,
-        )
-        .await?
-    };
+    let translated_text = groq_translate(
+        &api_key,
+        &source_language,
+        &target_language,
+        &source_text,
+        &llm,
+    )
+    .await?;
     Ok(ProviderResult {
         source_text,
         translated_text,
@@ -1016,9 +930,6 @@ pub async fn cloudflare_transcribe_and_translate(
     api_token: String,
     stt_model: Option<String>,
     llm_model: Option<String>,
-    llm_provider: Option<String>,
-    openrouter_api_key: Option<String>,
-    openrouter_model: Option<String>,
 ) -> Result<ProviderResult, String> {
     if account_id.trim().is_empty() || api_token.trim().is_empty() {
         return Err("Cloudflare account ID and API token are required".into());
@@ -1031,47 +942,15 @@ pub async fn cloudflare_transcribe_and_translate(
     let wav = pcm_to_wav(&pcm);
     let source_text =
         cloudflare_transcribe(&account_id, &api_token, &wav, &source_language, &stt).await?;
-    // Keep CF STT; if OpenRouter fails, fall back to Cloudflare LLM (current model)
-    let translated_text = if wants_openrouter(&llm_provider) {
-        let or_key = openrouter_api_key.unwrap_or_default();
-        if or_key.trim().is_empty() {
-            return Err("OpenRouter API key is required".into());
-        }
-        let or_model = resolve_model(openrouter_model.as_deref(), OPENROUTER_CHAT_MODEL);
-        match openrouter_translate(
-            &or_key,
-            &source_language,
-            &target_language,
-            &source_text,
-            &or_model,
-        )
-        .await
-        {
-            Ok(t) => t,
-            Err(e) => {
-                eprintln!("[provider] OpenRouter failed, falling back to Cloudflare LLM: {e}");
-                cloudflare_translate(
-                    &account_id,
-                    &api_token,
-                    &source_language,
-                    &target_language,
-                    &source_text,
-                    &llm,
-                )
-                .await?
-            }
-        }
-    } else {
-        cloudflare_translate(
-            &account_id,
-            &api_token,
-            &source_language,
-            &target_language,
-            &source_text,
-            &llm,
-        )
-        .await?
-    };
+    let translated_text = cloudflare_translate(
+        &account_id,
+        &api_token,
+        &source_language,
+        &target_language,
+        &source_text,
+        &llm,
+    )
+    .await?;
     Ok(ProviderResult {
         source_text,
         translated_text,
@@ -1195,34 +1074,6 @@ pub async fn cloudflare_translate_text(
     )
     .await
     .map_err(|e| wrap_provider_error("cloudflare", "translation", e))?;
-    Ok(ProviderResult {
-        source_text: text,
-        translated_text,
-    })
-}
-
-#[tauri::command]
-pub async fn openrouter_translate_text(
-    api_key: String,
-    source_language: String,
-    target_language: String,
-    text: String,
-    llm_model: Option<String>,
-) -> Result<ProviderResult, String> {
-    if api_key.trim().is_empty() {
-        return Err(provider_error_json(
-            "openrouter",
-            "translation",
-            reqwest::StatusCode::UNAUTHORIZED,
-            "OpenRouter API key is required",
-            None,
-        ));
-    }
-    let model = resolve_model(llm_model.as_deref(), OPENROUTER_CHAT_MODEL);
-    let translated_text =
-        openrouter_translate(&api_key, &source_language, &target_language, &text, &model)
-            .await
-            .map_err(|e| wrap_provider_error("openrouter", "translation", e))?;
     Ok(ProviderResult {
         source_text: text,
         translated_text,
@@ -1400,20 +1251,6 @@ pub async fn cloudflare_ping(account_id: String, api_token: String) -> Result<bo
         .await
         .map_err(|e| format!("Cloudflare ping failed: {e}"))?;
     Ok(cloudflare_response_ok(verify).await)
-}
-
-#[tauri::command]
-pub async fn openrouter_ping(api_key: String) -> Result<bool, String> {
-    if api_key.trim().is_empty() {
-        return Ok(false);
-    }
-    let resp = http()
-        .get(OPENROUTER_MODELS_URL)
-        .bearer_auth(api_key.trim())
-        .send()
-        .await
-        .map_err(|e| format!("OpenRouter ping failed: {e}"))?;
-    Ok(resp.status().is_success())
 }
 
 #[tauri::command]
@@ -1689,13 +1526,6 @@ mod tests {
             "https://api.cloudflare.com/client/v4/accounts/acct123/ai/models/search"
         );
         assert!(!url.contains("user/tokens/verify"));
-    }
-
-    #[test]
-    fn wants_openrouter_only_for_openrouter_provider() {
-        assert!(wants_openrouter(&Some("openrouter".into())));
-        assert!(!wants_openrouter(&Some("engine".into())));
-        assert!(!wants_openrouter(&None));
     }
 
     #[test]

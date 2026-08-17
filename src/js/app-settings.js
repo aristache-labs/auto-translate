@@ -46,16 +46,6 @@ export const appSettingsMethods = {
             const input = document.getElementById('input-cloudflare-account-id');
             if (input) input.type = input.type === 'password' ? 'text' : 'password';
         });
-        this._on('btn-toggle-openrouter-key', 'click', () => {
-            const input = document.getElementById('input-openrouter-key');
-            if (input) input.type = input.type === 'password' ? 'text' : 'password';
-        });
-        this._on('link-openrouter', 'click', (e) => {
-            e.preventDefault();
-            window.__TAURI__.opener.openUrl('https://openrouter.ai/keys');
-        });
-        this._on('input-openrouter-key', 'input', () => this._refreshKeyStatus());
-        this._on('btn-test-openrouter', 'click', () => this._testConnection('openrouter'));
         this._on('select-llm-provider', 'change', () => this._updateLlmProviderUI());
         this._on('check-llm-fallback', 'change', () => this._updateChainUI());
         this._on('btn-toggle-cloudflare-token', 'click', () => {
@@ -81,7 +71,7 @@ export const appSettingsMethods = {
         });
 
         const refreshChainInputs = [
-            'input-openrouter-key', 'input-groq-key', 'input-cloudflare-account-id',
+            'input-groq-key', 'input-cloudflare-account-id',
             'input-cloudflare-token', 'input-azure-key', 'check-azure-enabled',
             'input-gemini-key', 'check-gemini-enabled', 'input-ollama-model',
             'check-ollama-enabled', 'input-assemblyai-key', 'check-assemblyai-enabled',
@@ -317,13 +307,9 @@ export const appSettingsMethods = {
         this._setSelectValue('select-groq-stt-model', s.groq_stt_model || 'whisper-large-v3-turbo');
         this._setSelectValue('select-cloudflare-stt-model', s.cloudflare_stt_model || '@cf/openai/whisper-large-v3-turbo');
         this._setSelectValue('select-cloudflare-llm-model', s.cloudflare_llm_model || '@cf/meta/llama-3.1-8b-instruct-fp8-fast');
-        const orKey = document.getElementById('input-openrouter-key');
-        if (orKey) orKey.value = s.openrouter_api_key || '';
         this._setSelectValue('select-llm-provider', migrateLlmProvider(s.llm_provider));
         const llmFallback = document.getElementById('check-llm-fallback');
         if (llmFallback) llmFallback.checked = s.llm_fallback !== false;
-        const orModel = document.getElementById('input-openrouter-llm-model');
-        if (orModel) orModel.value = s.openrouter_llm_model || 'openai/gpt-4o-mini';
 
         // Azure Translator Text
         const azEnabled = document.getElementById('check-azure-enabled');
@@ -530,8 +516,6 @@ export const appSettingsMethods = {
             cloudflare_llm_model: document.getElementById('select-cloudflare-llm-model')?.value || '@cf/meta/llama-3.1-8b-instruct-fp8-fast',
             llm_provider: migrateLlmProvider(document.getElementById('select-llm-provider')?.value),
             llm_fallback: document.getElementById('check-llm-fallback')?.checked !== false,
-            openrouter_api_key: document.getElementById('input-openrouter-key')?.value.trim() || '',
-            openrouter_llm_model: document.getElementById('input-openrouter-llm-model')?.value.trim() || 'openai/gpt-4o-mini',
             azure_translator_enabled: document.getElementById('check-azure-enabled')?.checked || false,
             azure_translator_key: document.getElementById('input-azure-key')?.value.trim() || '',
             azure_translator_region: document.getElementById('input-azure-region')?.value.trim() || '',
@@ -847,12 +831,10 @@ export const appSettingsMethods = {
         const isLocal = mode === 'local';
         const isAutomatic = llm === 'automatic';
         const sectionLlm = document.getElementById('section-llm-provider');
-        const sectionOr = document.getElementById('section-openrouter-key');
         const labelFallback = document.getElementById('label-llm-fallback');
         const hintFallback = document.getElementById('hint-llm-fallback');
         const hintAuto = document.getElementById('hint-llm-automatic');
         if (sectionLlm) sectionLlm.style.display = isLocal ? 'none' : '';
-        if (sectionOr) sectionOr.style.display = 'none';
         if (labelFallback) labelFallback.style.display = (!isLocal && !isAutomatic) ? '' : 'none';
         if (hintFallback) hintFallback.style.display = (!isLocal && !isAutomatic) ? '' : 'none';
         if (hintAuto) hintAuto.style.display = (!isLocal && isAutomatic) ? '' : 'none';
@@ -896,8 +878,6 @@ export const appSettingsMethods = {
         const cfToken = document.getElementById('input-cloudflare-token')?.value.trim() || '';
         const groqOk = groqKey.length >= 20;
         const cfOk = cfAccount.length >= 8 && cfToken.length >= 20;
-        const orKey = document.getElementById('input-openrouter-key')?.value.trim() || '';
-        const orOk = orKey.startsWith('sk-or-') || orKey.length >= 20;
 
         const aaiStatus = document.getElementById('key-status-assemblyai');
         if (aaiStatus) {
@@ -914,11 +894,6 @@ export const appSettingsMethods = {
             const empty = !cfAccount && !cfToken;
             cfStatus.className = 'key-status ' + (empty ? '' : cfOk ? 'ok' : 'bad');
             cfStatus.textContent = empty ? '' : cfOk ? '✓ format ok' : '✗ account + token required';
-        }
-        const orStatus = document.getElementById('key-status-openrouter');
-        if (orStatus) {
-            orStatus.className = 'key-status ' + (orKey === '' ? '' : orOk ? 'ok' : 'bad');
-            orStatus.textContent = orKey === '' ? '' : orOk ? '✓ format ok' : '✗ check format';
         }
 
         const select = document.getElementById('select-translation-mode');
@@ -956,10 +931,6 @@ export const appSettingsMethods = {
                 const apiToken = document.getElementById('input-cloudflare-token')?.value.trim() || '';
                 if (!accountId || !apiToken) throw new Error('empty');
                 ok = await invoke('cloudflare_ping', { accountId, apiToken });
-            } else if (provider === 'openrouter') {
-                const apiKey = document.getElementById('input-openrouter-key')?.value.trim() || '';
-                if (!apiKey) throw new Error('empty');
-                ok = await invoke('openrouter_ping', { apiKey });
             } else if (provider === 'azure') {
                 const subscriptionKey = document.getElementById('input-azure-key')?.value.trim() || '';
                 const region = document.getElementById('input-azure-region')?.value.trim() || '';
@@ -1007,7 +978,6 @@ export const appSettingsMethods = {
         // Override settings with in-memory form values if present
         const formSettings = {
             ...settings,
-            openrouter_api_key: document.getElementById('input-openrouter-key')?.value.trim() || settings.openrouter_api_key,
             groq_api_key: document.getElementById('input-groq-key')?.value.trim() || settings.groq_api_key,
             groq_enabled: true,
             cloudflare_account_id: document.getElementById('input-cloudflare-account-id')?.value.trim() || settings.cloudflare_account_id,

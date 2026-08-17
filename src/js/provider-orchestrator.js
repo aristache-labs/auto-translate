@@ -255,14 +255,12 @@ export function sanitizeErrorMessage(error, _provider) {
 export function formatErrorNotification(provider, errorType, isRetrying = false) {
   const messages = {
     [ERROR_TYPES.QUOTA]: {
-      openrouter: 'OpenRouter daily quota exhausted',
       gemini: 'Gemini API quota exhausted',
       groq: 'Groq rate limit exceeded',
       cloudflare: 'Cloudflare quota exceeded',
       assemblyai: 'AssemblyAI rate limit exceeded',
     },
     [ERROR_TYPES.CONFIG]: {
-      openrouter: 'OpenRouter API key is invalid or missing',
       gemini: 'Gemini API key is invalid or missing',
       groq: 'Groq API key is invalid or missing',
       cloudflare: 'Cloudflare credentials are invalid or missing',
@@ -310,10 +308,6 @@ function isSttConfigured(settings, id, platform) {
 
 function isTranslationConfigured(settings, id) {
   switch (id) {
-    case 'openrouter':
-      return settings.openrouter_enabled !== false && hasText(settings.openrouter_api_key);
-    case 'groq-llm':
-      return settings.groq_enabled !== false && hasText(settings.groq_api_key);
     case 'cloudflare-llm':
       return settings.cloudflare_enabled !== false
         && hasText(settings.cloudflare_account_id)
@@ -347,8 +341,6 @@ export function sttModelFor(settings = {}, provider) {
 
 export function translationModelFor(settings = {}, provider) {
   switch (provider) {
-    case 'openrouter':
-      return settings.openrouter_llm_model || 'openai/gpt-4o-mini';
     case 'groq-llm':
       return settings.groq_llm_model || 'openai/gpt-oss-120b';
     case 'cloudflare-llm':
@@ -502,14 +494,6 @@ export function allocateSegmentId() {
 
 async function invokeTranslation(invoke, provider, settings, text, sourceLanguage, targetLanguage) {
   switch (provider) {
-    case 'openrouter':
-      return invoke('openrouter_translate_text', {
-        apiKey: settings.openrouter_api_key,
-        sourceLanguage,
-        targetLanguage,
-        text,
-        llmModel: settings.openrouter_llm_model || '',
-      });
     case 'groq-llm':
       return invoke('groq_translate_text', {
         apiKey: settings.groq_api_key,

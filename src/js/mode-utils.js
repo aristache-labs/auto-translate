@@ -29,7 +29,6 @@ export const SECRET_SETTING_KEYS = [
     'google_tts_api_key',
     'google_free_api_key',
     'tiktok_session_id',
-    'openrouter_api_key',
     'assemblyai_api_key',
     'azure_translator_key',
     'gemini_api_key',
@@ -116,8 +115,6 @@ export function clientConfigFromSettings(settings, mode = 'groq') {
             ? (settings.cloudflare_llm_model || '@cf/meta/llama-3.1-8b-instruct-fp8-fast')
             : (settings.groq_llm_model || 'openai/gpt-oss-120b'),
         llmProvider: settings.llm_provider || 'automatic',
-        openrouterApiKey: settings.openrouter_api_key || '',
-        openrouterModel: settings.openrouter_llm_model || 'openai/gpt-4o-mini',
         assemblyaiApiKey: settings.assemblyai_api_key || '',
         assemblyaiRegion: 'global',
         assemblyaiModel: settings.assemblyai_streaming_model || 'universal-streaming-english',

@@ -56,21 +56,12 @@ pub struct Settings {
     /// When a specific LLM is selected, continue down the automatic chain on failure.
     #[serde(default = "default_true")]
     pub llm_fallback: bool,
-    /// OpenRouter API key (chat completions)
-    #[serde(default)]
-    pub openrouter_api_key: String,
-    /// OpenRouter chat model
-    #[serde(default = "default_openrouter_llm_model")]
-    pub openrouter_llm_model: String,
     /// Whether Groq is eligible in automatic provider chains.
     #[serde(default = "default_true")]
     pub groq_enabled: bool,
     /// Whether Cloudflare Workers AI is eligible in automatic provider chains.
     #[serde(default = "default_true")]
     pub cloudflare_enabled: bool,
-    /// Whether OpenRouter is eligible in the translation chain.
-    #[serde(default = "default_true")]
-    pub openrouter_enabled: bool,
     /// AssemblyAI Streaming STT.
     #[serde(default = "default_true")]
     pub assemblyai_enabled: bool,
@@ -217,7 +208,6 @@ impl Default for Settings {
             llm_fallback: true,
             groq_enabled: true,
             cloudflare_enabled: true,
-            openrouter_enabled: true,
             assemblyai_enabled: true,
             assemblyai_api_key: String::new(),
             assemblyai_region: default_assemblyai_region(),
@@ -230,8 +220,6 @@ impl Default for Settings {
             assemblyai_max_turn_silence_ms: default_assemblyai_max_turn_silence_ms(),
             assemblyai_vad_threshold: default_assemblyai_vad_threshold(),
             assemblyai_end_of_turn_confidence: default_assemblyai_end_of_turn_confidence(),
-            openrouter_api_key: String::new(),
-            openrouter_llm_model: default_openrouter_llm_model(),
             azure_translator_enabled: false,
             azure_translator_key: String::new(),
             azure_translator_region: String::new(),
@@ -302,10 +290,6 @@ fn default_cloudflare_llm_model() -> String {
 
 fn default_llm_provider() -> String {
     "automatic".to_string()
-}
-
-fn default_openrouter_llm_model() -> String {
-    "openai/gpt-4o-mini".to_string()
 }
 
 fn default_azure_translator_endpoint() -> String {
@@ -421,10 +405,8 @@ mod tests {
         );
         assert_eq!(s.llm_provider, "automatic");
         assert!(s.llm_fallback);
-        assert_eq!(s.openrouter_llm_model, "openai/gpt-4o-mini");
         assert!(s.groq_enabled);
         assert!(s.cloudflare_enabled);
-        assert!(s.openrouter_enabled);
         assert!(s.assemblyai_enabled);
         assert!(s.assemblyai_api_key.is_empty());
         assert_eq!(s.assemblyai_region, "global");

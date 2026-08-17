@@ -62,8 +62,6 @@ test('effective STT chain filters disabled or unconfigured providers', () => {
 
 test('effective translation chain reflects active STT engine and enabled adapters', () => {
     const settings = {
-        openrouter_enabled: true,
-        openrouter_api_key: 'sk-or-123',
         groq_llm_model: 'openai/gpt-oss-20b',
         azure_translator_enabled: true,
         azure_translator_key: 'az_key',
@@ -113,7 +111,7 @@ test('error sanitization strips secrets and formats outage notifications cleanly
     assert.equal(sanitized.includes('gsk_secret123456789'), false);
     assert.equal(sanitized.includes('secretToken'), false);
 
-    const notification = formatErrorNotification('openrouter', ERROR_TYPES.QUOTA, false);
+    const notification = formatErrorNotification('gemini', ERROR_TYPES.QUOTA, false);
     assert.equal(notification.includes('quota'), true);
 });
 

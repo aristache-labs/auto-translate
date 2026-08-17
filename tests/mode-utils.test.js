@@ -92,13 +92,10 @@ test('client config uses sourceLanguage/targetLanguage', () => {
     }, 'cloudflare');
     assert.equal(cf.sttModel, '@cf/openai/whisper');
     assert.equal(cf.llmModel, '@cf/meta/llama-3-8b-instruct');
-    const or = clientConfigFromSettings({
-        llm_provider: 'openrouter',
-        openrouter_api_key: 'sk-or-test',
-        openrouter_llm_model: 'openai/gpt-4o-mini',
+    const auto = clientConfigFromSettings({
+        llm_provider: 'automatic',
     }, 'groq');
-    assert.equal(or.llmProvider, 'openrouter');
-    assert.equal(or.openrouterModel, 'openai/gpt-4o-mini');
+    assert.equal(auto.llmProvider, 'automatic');
 });
 
 test('single-flight fallback starts Cloudflare once', async () => {
