@@ -571,17 +571,26 @@ class App {
     _updateSettingsCards() {
         const s = settingsManager.get();
         const mode = migrateTranslationMode(s.translation_mode);
-        const engineNames = { groq: 'Groq', cloudflare: 'Cloudflare', local: 'Local MLX' };
-        const keyField = { groq: 'groq_api_key', cloudflare: 'cloudflare_api_token' };
+        const engineNames = {
+            automatic: 'Auto',
+            assemblyai: 'AssemblyAI',
+            groq: 'Groq',
+            cloudflare: 'Cloudflare',
+            local: 'Local MLX',
+        };
+        const keyField = { groq: 'groq_api_key', assemblyai: 'assemblyai_api_key' };
+        const hasCloudflareKey = !!(s.cloudflare_account_id || '').trim() && !!(s.cloudflare_api_token || '').trim();
         const hasKey = mode === 'local'
-            || (mode === 'cloudflare'
-                ? !!(s.cloudflare_account_id || '').trim() && !!(s.cloudflare_api_token || '').trim()
-                : !!(s[keyField[mode]] || '').trim());
+            || (mode === 'automatic'
+                ? getSttStartOrder(s, this._platformContext()).length > 0
+                : mode === 'cloudflare'
+                    ? hasCloudflareKey
+                    : !!(s[keyField[mode]] || '').trim());
         const subT = document.getElementById('card-translation-sub');
         if (subT) {
-            const llmName = mode === 'local'
-                ? 'Local'
-                : ((s.llm_provider || 'openrouter') === 'openrouter' ? 'OpenRouter' : engineNames[mode]);
+            const llm = s.llm_provider || 'automatic';
+            const llmNames = { automatic: 'Auto', openrouter: 'OpenRouter', engine: 'Engine' };
+            const llmName = mode === 'local' ? 'Local' : (llmNames[llm] || 'Auto');
             subT.textContent =
                 `STT ${engineNames[mode] || mode} · LLM ${llmName} · ${s.source_language || 'auto'} → ${s.target_language || 'vi'}` +
                 (hasKey ? '' : ' · ⚠️ missing API key');
