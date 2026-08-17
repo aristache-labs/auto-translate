@@ -41,9 +41,9 @@ import {
     noteHalfOpenProbe,
     noteProviderSuccess,
     isCircuitBreakerHalfOpen,
-    shouldFireLiveTranslation,
     LIVE_TRANSLATION_TIMEOUT_MS,
     LIVE_TRANSLATION_MIN_INTERVAL_MS,
+    countWords,
     ERROR_TYPES,
 } from './provider-orchestrator.js';
 import { ollamaTranslator } from './ollama-translator.js';
@@ -760,18 +760,26 @@ class App {
         if (!client) return;
         client.onStatusChange = (status) => this._updateStatus(status);
         client.onProvisional = (text, speaker, language) => {
-            if (client !== this.activeSttClient) return;
+            if (client !== this.activeSttClient) {
+                console.log(`[live-tx] PROVISIONAL ignored: client mismatch active=${this.activeSttProvider} client=${client.providerId}`);
+                return;
+            }
             if (text) {
-                console.debug(`[timing] stt.partial provider=${client.providerId} chars=${text.length}`);
+                console.log(`[live-tx] PROVISIONAL chars=${text.length} speaker=${speaker} lang=${language}`);
                 this.transcriptUI.setProvisional(text, speaker, language);
                 this._onLiveSourcePartial(text, language);
             } else {
+                console.log(`[live-tx] PROVISIONAL cleared`);
                 this._invalidateLiveTranslation();
                 this.transcriptUI.clearProvisional();
             }
         };
         client.onOriginal = (text, speaker, language) => {
-            if (client !== this.activeSttClient) return;
+            if (client !== this.activeSttClient) {
+                console.log(`[live-tx] ORIGINAL ignored: client mismatch`);
+                return;
+            }
+            console.log(`[live-tx] ORIGINAL chars=${text?.length} speaker=${speaker} lang=${language}`);
             console.debug(`[timing] stt.final provider=${client.providerId} chars=${(text || '').length}`);
             this._commitSourceTurn(text, speaker, language);
         };
@@ -2560,7 +2568,7 @@ class App {
     async start() {
         const settings = settingsManager.get();
         this.translationMode = migrateTranslationMode(settings.translation_mode);
-        console.log('[App] start() called, translation_mode:', this.translationMode, 'settings:', redactSettings(settings));
+        console.log('[App] start() called, translation_mode:', this.translationMode, 'activeSttProvider:', this.activeSttProvider, 'isRunning:', this.isRunning);
 
         if (this.translationMode === 'local' && !this.isAppleSilicon) {
             this._showToast('Local MLX only runs on macOS Apple Silicon. Choose another engine in Settings.', 'error');
@@ -2569,6 +2577,7 @@ class App {
         }
 
         const startOrder = getSttStartOrder(settings, this._platformContext());
+        console.log('[App] STT start order:', startOrder, 'assemblyai_key:', !!settings.assemblyai_api_key, 'groq_key:', !!settings.groq_api_key);
         if (!startOrder.length) {
             this._showToast('No STT providers are configured. Add credentials in Settings.', 'error');
             this._showView('settings');
@@ -2717,15 +2726,21 @@ class App {
 
         try {
             if (provider === 'local-stt' || provider === 'local') {
+                console.log('[App] Starting LOCAL STT mode');
                 await this._startLocalMode(settings);
                 this.activeSttProvider = 'local-stt';
                 this.activeSttClient = this._localAudioAdapter();
             } else {
+                console.log('[App] Starting', provider, 'STT provider');
                 const client = this._clientForProvider(provider);
-                if (!client) return false;
+                if (!client) {
+                    console.log('[App] No client for provider:', provider);
+                    return false;
+                }
                 this._bindProviderClients();
                 const config = clientConfigFromSettings(settings, provider === 'cloudflare' ? 'cloudflare' : 'groq');
                 if (provider === 'assemblyai') {
+                    console.log('[App] Connecting AssemblyAI to', settings.assemblyai_region || 'eu');
                     await client.connect({
                         ...config,
                         region: settings.assemblyai_region || 'eu',
@@ -2736,10 +2751,14 @@ class App {
                 } else {
                     client.connect(config);
                 }
-                if (!client.isConnected) throw new Error(`${provider} failed to connect`);
+                if (!client.isConnected) {
+                    console.log('[App]', provider, 'failed to connect');
+                    throw new Error(`${provider} failed to connect`);
+                }
                 this.activeSttProvider = provider;
                 this.activeSttClient = client;
                 this.transcriptUI.provider = provider;
+                console.log('[App]', provider, 'connected successfully');
             }
             noteProviderSuccess(key);
             markSttTransition();
@@ -2751,6 +2770,7 @@ class App {
             }
             return true;
         } catch (err) {
+            console.log('[App] Failed to connect', provider, ':', err?.message, 'active:', this.activeSttProvider);
             applyProviderError(parseProviderError(err, { provider, capability: 'stt' }));
             return false;
         }
@@ -2844,6 +2864,7 @@ class App {
     }
 
     _invalidateLiveTranslation() {
+        const oldGen = this._liveTranslationGen;
         this._liveTranslationGen += 1;
         this._liveSourceText = '';
         this._liveSourceLang = null;
@@ -2854,23 +2875,29 @@ class App {
             this._liveTranslateTimer = null;
         }
         this.transcriptUI?.clearTranslationProvisional?.();
+        console.log(`[live-tx] INVALIDATED gen ${oldGen} -> ${this._liveTranslationGen}`);
     }
 
     _onLiveSourcePartial(text, language) {
         const chunk = (text || '').trim();
         if (!chunk || !this.isRunning) {
+            console.log(`[live-tx] INVALIDATE: isRunning=${this.isRunning} chunk="${chunk.slice(0, 40)}"`);
             this._invalidateLiveTranslation();
             return;
         }
         this._liveSourceText = chunk;
         this._liveSourceLang = language || this.sessionSourceLang || 'auto';
         const now = Date.now();
-        if (shouldFireLiveTranslation({
-            text: chunk,
-            lastSentText: this._liveSentText,
-            lastSentAt: this._liveSentAt,
-            now,
-        })) {
+
+        // Fire immediately if enough new words, or after interval has elapsed
+        const timeSinceLast = this._liveSentAt ? now - this._liveSentAt : Infinity;
+        const newWords = countWords(chunk) - countWords(this._liveSentText);
+        const shouldFire = newWords >= LIVE_TRANSLATION_MIN_NEW_WORDS
+            || timeSinceLast >= LIVE_TRANSLATION_MIN_INTERVAL_MS * 1.5;
+
+        console.log(`[live-tx] partial chars=${chunk.length} newWords=${newWords} timeSinceLast=${Math.round(timeSinceLast)}ms shouldFire=${shouldFire} gen=${this._liveTranslationGen}`);
+
+        if (shouldFire) {
             if (this._liveTranslateTimer) {
                 clearTimeout(this._liveTranslateTimer);
                 this._liveTranslateTimer = null;
@@ -2878,11 +2905,15 @@ class App {
             void this._requestLiveTranslation();
             return;
         }
-        if (this._liveTranslateTimer) return;
+        if (this._liveTranslateTimer) {
+            console.log(`[live-tx] scheduled wait=${Math.round(LIVE_TRANSLATION_MIN_INTERVAL_MS - timeSinceLast)}ms`);
+            return;
+        }
         const wait = Math.max(
             50,
-            LIVE_TRANSLATION_MIN_INTERVAL_MS - (this._liveSentAt ? now - this._liveSentAt : 0),
+            LIVE_TRANSLATION_MIN_INTERVAL_MS - timeSinceLast,
         );
+        console.log(`[live-tx] schedule wait=${Math.round(wait)}ms`);
         this._liveTranslateTimer = setTimeout(() => {
             this._liveTranslateTimer = null;
             void this._requestLiveTranslation();
@@ -2891,15 +2922,24 @@ class App {
 
     async _requestLiveTranslation() {
         const text = (this._liveSourceText || '').trim();
-        if (!text || !this.isRunning) return;
-        if (text === this._liveSentText) return;
+        if (!text || !this.isRunning) {
+            console.log(`[live-tx] ABORT: text="${text?.slice(0, 30)}" isRunning=${this.isRunning}`);
+            return;
+        }
+        if (text === this._liveSentText) {
+            console.log(`[live-tx] SKIP: same text chars=${text.length}`);
+            return;
+        }
+
         const gen = ++this._liveTranslationGen;
         this._liveSentText = text;
         this._liveSentAt = Date.now();
         const settings = settingsManager.get();
         const language = this._liveSourceLang || this.sessionSourceLang || settings.source_language || 'auto';
-        console.debug(`[timing] translation.start mode=live chars=${text.length}`);
+        console.log(`[live-tx] REQUEST gen=${gen} chars=${text.length} lang=${language} provider=${this.activeSttProvider}`);
+
         try {
+            const t0 = Date.now();
             const result = await translateWithChain({
                 settings,
                 activeStt: this.activeSttProvider,
@@ -2914,26 +2954,55 @@ class App {
                 allowRetry: false,
                 mode: 'live',
             });
-            if (result?.ignored) return;
-            if (gen !== this._liveTranslationGen || !this.isRunning) return;
+            const elapsed = Date.now() - t0;
+            console.log(`[live-tx] RESPONSE gen=${gen} elapsed=${elapsed}ms provider=${result?.provider} ignored=${result?.ignored} chars=${(result?.translatedText || '').length}`);
+
+            if (result?.ignored) {
+                console.log(`[live-tx] IGNORED gen=${gen}`);
+                return;
+            }
+            if (gen !== this._liveTranslationGen || !this.isRunning) {
+                console.log(`[live-tx] STALE gen=${gen} current=${this._liveTranslationGen} isRunning=${this.isRunning}`);
+                return;
+            }
             const translated = (result.translatedText || '').trim();
-            if (!translated) return;
+            if (!translated) {
+                console.log(`[live-tx] EMPTY result`);
+                return;
+            }
+            console.log(`[live-tx] UPDATE draft="${translated.slice(0, 60)}..."`);
             this.transcriptUI.setTranslationProvisional(translated);
-            console.debug(`[timing] ui.render mode=live chars=${translated.length}`);
-        } catch {
+            console.log(`[timing] ui.render mode=live chars=${translated.length}`);
+        } catch (err) {
+            console.log(`[live-tx] ERROR gen=${gen} err=${err?.message || err}`);
             /* live failures are silent — final path remains authoritative */
         }
+        this._scheduleNextLiveTranslation();
+    }
+
+    _scheduleNextLiveTranslation() {
+        if (!this.isRunning) return;
+        const now = Date.now();
+        const wait = Math.max(
+            50,
+            LIVE_TRANSLATION_MIN_INTERVAL_MS - (this._liveSentAt ? now - this._liveSentAt : 0),
+        );
+        this._liveTranslateTimer = setTimeout(() => {
+            this._liveTranslateTimer = null;
+            void this._requestLiveTranslation();
+        }, wait);
     }
 
     _commitSourceTurn(text, speaker, language) {
         const chunk = (text || '').trim();
         if (!chunk) return;
+        console.log(`[live-tx] FINAL_TURN chars=${chunk.length} speaker=${speaker} lang=${language}`);
         this._invalidateLiveTranslation();
         this.transcriptUI.clearProvisional();
         this.transcriptUI.addOriginal(chunk, speaker, language);
         const segmentId = allocateSegmentId();
         this._translationJobs.set(segmentId, { text: chunk });
-        console.debug(`[timing] translation.start mode=final segment=${segmentId} chars=${chunk.length}`);
+        console.log(`[live-tx] enqueue final segment=${segmentId} chars=${chunk.length}`);
         this._enqueueTranslation(segmentId, chunk, language);
         this._maybeRecoverStt();
     }
@@ -2947,6 +3016,7 @@ class App {
     async _translateSegment(segmentId, text, language) {
         const settings = settingsManager.get();
         const startedAt = Date.now();
+        console.log(`[live-tx] final translate segment=${segmentId} chars=${text.length} lang=${language}`);
         try {
             const result = await translateWithChain({
                 settings,
@@ -2960,18 +3030,19 @@ class App {
                 invoke,
                 mode: 'final',
             });
+            const elapsed = Date.now() - startedAt;
+            console.log(`[live-tx] final response segment=${segmentId} elapsed=${elapsed}ms provider=${result?.provider} ignored=${result?.ignored}`);
             if (result?.ignored) return;
             if (!this._translationJobs.has(segmentId)) return;
             const translated = result.translatedText || text;
             this.transcriptUI.addTranslation(translated);
-            console.debug(
-                `[timing] ui.render mode=final segment=${segmentId} ms=${Date.now() - startedAt}`,
-            );
+            console.log(`[timing] ui.render mode=final segment=${segmentId} chars=${translated.length} elapsed=${elapsed}ms`);
             this._speakIfEnabled(translated);
             sessionStore.addSegment(text, translated);
             this._translationJobs.delete(segmentId);
         } catch (err) {
             const parsed = parseProviderError(err, { capability: 'translation' });
+            console.log(`[live-tx] final ERROR segment=${segmentId} err=${parsed.message || err}`);
             this._showToast(parsed.message || 'Translation failed', 'error');
             if (this._translationJobs.has(segmentId)) {
                 sessionStore.addSegment(text, '');

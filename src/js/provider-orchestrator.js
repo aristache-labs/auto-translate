@@ -457,9 +457,9 @@ function translatedFromResult(result) {
   return (result?.translated_text || result?.translatedText || '').trim();
 }
 
-export const LIVE_TRANSLATION_TIMEOUT_MS = 2500;
-export const LIVE_TRANSLATION_MIN_INTERVAL_MS = 1400;
-export const LIVE_TRANSLATION_MIN_NEW_WORDS = 12;
+export const LIVE_TRANSLATION_TIMEOUT_MS = 2000;
+export const LIVE_TRANSLATION_MIN_INTERVAL_MS = 600;
+export const LIVE_TRANSLATION_MIN_NEW_WORDS = 3;
 
 export function countWords(text) {
   return String(text || '')

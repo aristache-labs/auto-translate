@@ -354,29 +354,23 @@ export class TranscriptUI {
         const nextText = text || '';
         const previous = this.translationProvisionalText || '';
         const previousVisible = this.translationProvisionalVisible;
-        const stablePrefix = commonPrefixLength(previous, nextText);
-        const minLen = Math.min(previous.length, nextText.length);
-        const prefixRatio = minLen ? stablePrefix / minLen : 1;
 
-        // Divergent full re-translations flicker; keep the previous draft until
-        // the next revision shares enough prefix or a final commit arrives.
-        if (
-            previous
-            && nextText
-            && previousVisible > 24
-            && prefixRatio < 0.5
-            && !nextText.startsWith(previous.slice(0, Math.min(48, previous.length)))
-        ) {
-            return;
+        // Reject updates that diverge too much from the current draft — prevents
+        // the LLM from replacing the whole draft with a completely different sentence.
+        if (previous && nextText && previousVisible > 12) {
+            const prefix = previous.slice(0, Math.min(previousVisible + 24, previous.length));
+            const sharesPrefix = nextText.startsWith(prefix)
+                || commonPrefixLength(previous, nextText) >= prefix.length * 0.85;
+            if (!sharesPrefix) {
+                console.debug('[translation.provisional] rejected: divergent translation');
+                return;
+            }
         }
 
+        const stablePrefix = commonPrefixLength(previous, nextText);
         this.translationProvisionalVisible = this._reducedMotion
             ? textLength(nextText)
-            : Math.min(
-                previousVisible,
-                // Avoid snapping the visible caret back to zero on small edits.
-                Math.max(stablePrefix, previousVisible > 0 ? previousVisible - 16 : 0),
-            );
+            : Math.min(previousVisible, stablePrefix);
         if (!nextText) {
             this._translationProvisionalStartedAt = 0;
             this.translationProvisionalVisible = 0;

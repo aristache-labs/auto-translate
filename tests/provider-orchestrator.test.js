@@ -273,24 +273,27 @@ test('live translation throttle fires on new words or interval', () => {
     lastSentAt: 0,
   }), true);
   assert.equal(shouldFireLiveTranslation({
-    text: 'one two three four five six seven eight nine ten eleven twelve thirteen fourteen',
+    text: 'one two three four five six seven eight nine ten eleven twelve',
     lastSentText: 'one two',
-    lastSentAt: Date.now(),
+    lastSentAt: Date.now() - 2100,
   }), true);
   assert.equal(shouldFireLiveTranslation({
     text: 'one two three',
     lastSentText: 'one two three',
     lastSentAt: Date.now(),
   }), false);
+  // 1 word added with only 100ms elapsed (well under 600ms threshold)
   assert.equal(shouldFireLiveTranslation({
     text: 'one two three four',
     lastSentText: 'one two three',
-    lastSentAt: Date.now() - 900,
+    lastSentAt: Date.now() - 100,
+    minIntervalMs: 600,
   }), false);
+  // 1 word added with enough time elapsed
   assert.equal(shouldFireLiveTranslation({
     text: 'one two three four',
     lastSentText: 'one two three',
-    lastSentAt: Date.now() - 1500,
+    lastSentAt: Date.now() - 1000,
   }), true);
 });
 test('live translation mode skips same-provider retry and respects timeout', async () => {
