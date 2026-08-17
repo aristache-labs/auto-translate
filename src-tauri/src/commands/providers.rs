@@ -184,7 +184,7 @@ fn error_kind_for_status(code: u16) -> &'static str {
     match code {
         429 => "quota",
         408 | 500..=599 => "temporary",
-        400 | 401 | 403 => "config",
+        400 | 401 | 403 | 404 | 410 => "config",
         _ => "temporary",
     }
 }
@@ -1181,8 +1181,8 @@ fn wrap_provider_error(provider: &str, capability: &str, err: String) -> String 
 fn assemblyai_token_url(region: &str) -> &'static str {
     match region.trim().to_ascii_lowercase().as_str() {
         "us" => "https://streaming.us.assemblyai.com/v3/token",
-        "global" | "edge" => "https://streaming.assemblyai.com/v3/token",
-        _ => "https://streaming.eu.assemblyai.com/v3/token",
+        "eu" => "https://streaming.eu.assemblyai.com/v3/token",
+        _ => "https://streaming.assemblyai.com/v3/token",
     }
 }
 
@@ -1222,7 +1222,7 @@ pub async fn assemblyai_streaming_token(
             .lock()
             .ok()
             .map(|s| s.assemblyai_region.clone())
-            .unwrap_or_else(|| "eu".into())
+            .unwrap_or_else(|| "global".into())
     });
     mint_assemblyai_token(&key, &region).await
 }
@@ -1281,7 +1281,7 @@ pub async fn assemblyai_ping(api_key: String, region: Option<String>) -> Result<
     if api_key.trim().is_empty() {
         return Ok(false);
     }
-    mint_assemblyai_token(&api_key, region.as_deref().unwrap_or("eu")).await?;
+    mint_assemblyai_token(&api_key, region.as_deref().unwrap_or("global")).await?;
     Ok(true)
 }
 

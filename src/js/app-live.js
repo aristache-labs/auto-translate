@@ -168,13 +168,18 @@ export const appLiveMethods = {
                 this._bindProviderClients();
                 const config = clientConfigFromSettings(settings, provider === 'cloudflare' ? 'cloudflare' : 'groq');
                 if (provider === 'assemblyai') {
-                    console.log('[App] Connecting AssemblyAI to', settings.assemblyai_region || 'eu');
+                    console.log('[App] Connecting AssemblyAI to wss://streaming.assemblyai.com/v3/ws');
                     await client.connect({
                         ...config,
-                        region: settings.assemblyai_region || 'eu',
+                        region: 'global',
                         model: settings.assemblyai_streaming_model || 'universal-streaming-english',
                         speakerLabels: !!settings.assemblyai_speaker_labels,
-                        endpointDelayMs: settings.endpoint_delay || 3000,
+                        filterProfanity: !!settings.assemblyai_filter_profanity,
+                        redactPii: !!settings.assemblyai_redact_pii,
+                        minTurnSilenceMs: settings.assemblyai_min_turn_silence_ms ?? 400,
+                        maxTurnSilenceMs: settings.assemblyai_max_turn_silence_ms ?? 1280,
+                        vadThreshold: settings.assemblyai_vad_threshold ?? 0.4,
+                        endOfTurnConfidence: settings.assemblyai_end_of_turn_confidence ?? 0.4,
                     });
                 } else {
                     client.connect(config);

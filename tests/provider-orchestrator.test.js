@@ -61,6 +61,8 @@ test('classifyError categorizes HTTP status codes properly', () => {
   assert.equal(classifyError(503, '{}', 'cloudflare'), ERROR_TYPES.TEMPORARY);
   assert.equal(classifyError(401, '{}', 'gemini'), ERROR_TYPES.CONFIG);
   assert.equal(classifyError(403, '{}', 'azure'), ERROR_TYPES.CONFIG);
+  assert.equal(classifyError(404, '{}', 'openrouter'), ERROR_TYPES.CONFIG);
+  assert.equal(classifyError(410, '{}', 'groq'), ERROR_TYPES.CONFIG);
   assert.equal(classifyError(null, '{}', 'local'), ERROR_TYPES.UNSUPPORTED);
 });
 
@@ -264,6 +266,21 @@ test('allocateSegmentId is unique', () => {
 test('parseProviderError never keeps bearer tokens', () => {
   const parsed = parseProviderError('authorization=Bearer super-secret-token HTTP 401');
   assert.equal(parsed.message.includes('super-secret-token'), false);
+});
+
+test('HTTP 404 translation errors open the config breaker', () => {
+  resetAllCircuitBreakers();
+  const parsed = parseProviderError({
+    provider: 'openrouter',
+    capability: 'translation',
+    kind: 'temporary',
+    status: 404,
+    message: 'HTTP 404',
+  });
+  assert.equal(parsed.kind, ERROR_TYPES.CONFIG);
+  applyProviderError(parsed);
+  assert.equal(isCircuitBreakerOpen(breakerKey('translation', 'openrouter')), true);
+  resetAllCircuitBreakers();
 });
 
 test('live translation throttle fires on new words or interval', () => {

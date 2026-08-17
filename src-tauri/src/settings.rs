@@ -79,6 +79,20 @@ pub struct Settings {
     pub assemblyai_streaming_model: String,
     #[serde(default)]
     pub assemblyai_speaker_labels: bool,
+    #[serde(default)]
+    pub assemblyai_medical: bool,
+    #[serde(default)]
+    pub assemblyai_redact_pii: bool,
+    #[serde(default)]
+    pub assemblyai_filter_profanity: bool,
+    #[serde(default = "default_assemblyai_min_turn_silence_ms")]
+    pub assemblyai_min_turn_silence_ms: u32,
+    #[serde(default = "default_assemblyai_max_turn_silence_ms")]
+    pub assemblyai_max_turn_silence_ms: u32,
+    #[serde(default = "default_assemblyai_vad_threshold")]
+    pub assemblyai_vad_threshold: f32,
+    #[serde(default = "default_assemblyai_end_of_turn_confidence")]
+    pub assemblyai_end_of_turn_confidence: f32,
     /// Whether Azure AI Translator Text is available in the translation chain.
     #[serde(default)]
     pub azure_translator_enabled: bool,
@@ -205,6 +219,13 @@ impl Default for Settings {
             assemblyai_region: default_assemblyai_region(),
             assemblyai_streaming_model: default_assemblyai_streaming_model(),
             assemblyai_speaker_labels: false,
+            assemblyai_medical: false,
+            assemblyai_redact_pii: false,
+            assemblyai_filter_profanity: false,
+            assemblyai_min_turn_silence_ms: default_assemblyai_min_turn_silence_ms(),
+            assemblyai_max_turn_silence_ms: default_assemblyai_max_turn_silence_ms(),
+            assemblyai_vad_threshold: default_assemblyai_vad_threshold(),
+            assemblyai_end_of_turn_confidence: default_assemblyai_end_of_turn_confidence(),
             openrouter_api_key: String::new(),
             openrouter_llm_model: default_openrouter_llm_model(),
             azure_translator_enabled: false,
@@ -292,11 +313,27 @@ fn default_true() -> bool {
 }
 
 fn default_assemblyai_region() -> String {
-    "eu".to_string()
+    "global".to_string()
 }
 
 fn default_assemblyai_streaming_model() -> String {
     "universal-streaming-english".to_string()
+}
+
+fn default_assemblyai_min_turn_silence_ms() -> u32 {
+    400
+}
+
+fn default_assemblyai_max_turn_silence_ms() -> u32 {
+    1280
+}
+
+fn default_assemblyai_vad_threshold() -> f32 {
+    0.4
+}
+
+fn default_assemblyai_end_of_turn_confidence() -> f32 {
+    0.4
 }
 
 fn default_gemini_model() -> String {
@@ -385,7 +422,7 @@ mod tests {
         assert!(s.openrouter_enabled);
         assert!(s.assemblyai_enabled);
         assert!(s.assemblyai_api_key.is_empty());
-        assert_eq!(s.assemblyai_region, "eu");
+        assert_eq!(s.assemblyai_region, "global");
         assert_eq!(s.assemblyai_streaming_model, "universal-streaming-english");
         assert!(!s.gemini_enabled);
         assert!(!s.ollama_enabled);

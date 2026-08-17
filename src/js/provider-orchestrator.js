@@ -48,7 +48,9 @@ export function classifyError(status, body, provider) {
   const text = typeof body === 'string' ? body : '';
   if (/quota|rate[\s_-]?limit/i.test(text)) return ERROR_TYPES.QUOTA;
   if (status === 408 || (status >= 500 && status < 600)) return ERROR_TYPES.TEMPORARY;
-  if (status === 400 || status === 401 || status === 403) return ERROR_TYPES.CONFIG;
+  if (status === 400 || status === 401 || status === 403 || status === 404 || status === 410) {
+    return ERROR_TYPES.CONFIG;
+  }
   if ((provider === 'local' || provider === 'local-stt') && status === null) {
     return ERROR_TYPES.UNSUPPORTED;
   }
@@ -93,7 +95,10 @@ export function parseProviderError(error, defaults = {}) {
   const status = parsed?.status ?? parsed?.httpStatus ?? defaults.status ?? statusFromText;
   const provider = parsed?.provider || defaults.provider || 'unknown';
   const capability = parsed?.capability || defaults.capability || 'stt';
-  const kind = parsed?.kind || classifyError(status, raw, provider);
+  let kind = parsed?.kind || classifyError(status, raw, provider);
+  // Model-not-found must trip the config breaker even if the native layer
+  // tagged the 404 as temporary — otherwise live-tx retries it every 300ms.
+  if (status === 404 || status === 410) kind = ERROR_TYPES.CONFIG;
   const retryAfterMs = parsed?.retryAfterMs ?? parsed?.retry_after_ms ?? null;
   const closeCode = parsed?.closeCode ?? parsed?.close_code ?? null;
   return {

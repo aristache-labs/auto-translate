@@ -23,9 +23,38 @@ export function turnSilenceFromEndpointDelay(endpointDelayMs = 3000) {
     };
 }
 
+export function streamingQueryParams({
+    token,
+    model = 'universal-streaming-english',
+    speakerLabels = false,
+    filterProfanity = false,
+    redactPii = false,
+    minTurnSilenceMs = 400,
+    maxTurnSilenceMs = 1280,
+    vadThreshold = 0.4,
+    endOfTurnConfidence = 0.4,
+} = {}) {
+    const min = Math.max(200, Math.min(Number(minTurnSilenceMs) || 400, 2000));
+    const max = Math.max(min, Math.min(Number(maxTurnSilenceMs) || 1280, 4000));
+    const params = new URLSearchParams({
+        sample_rate: '16000',
+        speech_model: model,
+        format_turns: 'true',
+        min_end_of_turn_silence_when_confident: String(min),
+        max_turn_silence: String(max),
+        end_of_turn_confidence_threshold: String(Number(endOfTurnConfidence) || 0.4),
+        vad_threshold: String(Number(vadThreshold) || 0.4),
+    });
+    if (token) params.set('token', token);
+    if (speakerLabels) params.set('speaker_labels', 'true');
+    if (filterProfanity) params.set('filter_profanity', 'true');
+    if (redactPii) params.set('redact_pii', 'true');
+    return params;
+}
+
 function endpointForRegion(region) {
-    const key = String(region || 'eu').toLowerCase();
-    return ASSEMBLYAI_ENDPOINTS[key] || ASSEMBLYAI_ENDPOINTS.eu;
+    const key = String(region || 'global').toLowerCase();
+    return ASSEMBLYAI_ENDPOINTS[key] || ASSEMBLYAI_ENDPOINTS.global;
 }
 
 function extractTurnText(msg) {
@@ -64,9 +93,15 @@ export class AssemblyAIClient {
 
     async connect(config = {}) {
         this._config = {
-            region: config.region || config.assemblyaiRegion || 'eu',
+            region: config.region || config.assemblyaiRegion || 'global',
             model: config.model || config.assemblyaiModel || 'universal-streaming-english',
             speakerLabels: !!(config.speakerLabels ?? config.assemblyaiSpeakerLabels),
+            filterProfanity: !!(config.filterProfanity ?? config.assemblyaiFilterProfanity),
+            redactPii: !!(config.redactPii ?? config.assemblyaiRedactPii),
+            minTurnSilenceMs: config.minTurnSilenceMs ?? config.assemblyaiMinTurnSilenceMs,
+            maxTurnSilenceMs: config.maxTurnSilenceMs ?? config.assemblyaiMaxTurnSilenceMs,
+            vadThreshold: config.vadThreshold ?? config.assemblyaiVadThreshold ?? 0.4,
+            endOfTurnConfidence: config.endOfTurnConfidence ?? config.assemblyaiEndOfTurnConfidence ?? 0.4,
             sourceLanguage: config.sourceLanguage || config.sourceLang || 'auto',
             endpointDelayMs: config.endpointDelayMs ?? config.endpoint_delay ?? 3000,
         };
@@ -112,16 +147,23 @@ export class AssemblyAIClient {
                 message: 'WebSocket is unavailable',
             });
         }
-        const silence = turnSilenceFromEndpointDelay(this._config.endpointDelayMs);
-        const params = new URLSearchParams({
-            sample_rate: '16000',
+        const hasExplicitSilence = this._config.minTurnSilenceMs != null || this._config.maxTurnSilenceMs != null;
+        const silence = hasExplicitSilence ? null : turnSilenceFromEndpointDelay(this._config.endpointDelayMs);
+        const params = streamingQueryParams({
             token,
-            speech_model: this._config.model,
-            format_turns: 'true',
-            min_end_of_turn_silence_when_confident: silence.min_end_of_turn_silence_when_confident,
-            max_turn_silence: silence.max_turn_silence,
+            model: this._config.model,
+            speakerLabels: this._config.speakerLabels,
+            filterProfanity: this._config.filterProfanity,
+            redactPii: this._config.redactPii,
+            minTurnSilenceMs: silence
+                ? Number(silence.min_end_of_turn_silence_when_confident)
+                : this._config.minTurnSilenceMs,
+            maxTurnSilenceMs: silence
+                ? Number(silence.max_turn_silence)
+                : this._config.maxTurnSilenceMs,
+            vadThreshold: this._config.vadThreshold,
+            endOfTurnConfidence: this._config.endOfTurnConfidence,
         });
-        if (this._config.speakerLabels) params.set('speaker_labels', 'true');
         const url = `${endpointForRegion(this._config.region)}?${params.toString()}`;
         return new Promise((resolve, reject) => {
             const ws = new WS(url);

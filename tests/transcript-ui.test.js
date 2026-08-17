@@ -209,3 +209,15 @@ test('a short meaningful provisional tail is not repeated as a new live line', (
 
     assert.doesNotMatch(ui.contentEl.innerHTML, /provisional-pair/);
 });
+
+test('live translation draft accepts a rephrased longer update', (t) => {
+    const ui = withFakeDom(t);
+    ui._reducedMotion = true;
+    ui.setTranslationProvisional('Bună ziua tuturor');
+    ui.translationProvisionalVisible = 20;
+    ui.setTranslationProvisional('Bună ziua toată lumea, vă mulțumim pentru venirea înapoi.');
+    assert.equal(
+        ui.translationProvisionalText,
+        'Bună ziua toată lumea, vă mulțumim pentru venirea înapoi.',
+    );
+});

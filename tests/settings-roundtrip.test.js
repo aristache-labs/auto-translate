@@ -8,7 +8,7 @@ function migrateJsDefaults(saved) {
         openrouter_enabled: true,
         assemblyai_enabled: true,
         assemblyai_api_key: '',
-        assemblyai_region: 'eu',
+        assemblyai_region: 'global',
         assemblyai_streaming_model: 'universal-streaming-english',
         assemblyai_speaker_labels: false,
         azure_translator_enabled: false,
@@ -66,7 +66,7 @@ test('legacy settings migrate without dropping credentials', () => {
     };
     const loaded = migrateJsDefaults(legacy);
     assert.equal(loaded.groq_api_key, 'gsk_old');
-    assert.equal(loaded.assemblyai_region, 'eu');
+    assert.equal(loaded.assemblyai_region, 'global');
     assert.equal(loaded.gemini_enabled, false);
     assert.equal(loaded.ollama_base_url, 'http://127.0.0.1:11434');
 });

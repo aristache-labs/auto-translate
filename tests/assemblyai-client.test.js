@@ -39,9 +39,11 @@ test('AssemblyAI partial Turn updates provisional text only', async () => {
     const events = [];
     client.onProvisional = (t) => events.push(['prov', t]);
     client.onOriginal = (t) => events.push(['orig', t]);
-    await client.connect({ region: 'eu', model: 'universal-streaming-english' });
+    await client.connect({ model: 'universal-streaming-english' });
     const ws = FakeWebSocket.instances[0];
-    assert.match(ws.url, /streaming\.eu\.assemblyai\.com\/v3\/ws/);
+    assert.match(ws.url, /streaming\.assemblyai\.com\/v3\/ws/);
+    assert.equal(ws.url.includes('streaming.eu.'), false);
+    assert.equal(ws.url.includes('streaming.us.'), false);
     assert.match(ws.url, /token=tmp_token/);
     assert.equal(ws.url.includes('aai_live'), false);
     ws.onmessage({ data: JSON.stringify({ type: 'Begin' }) });
@@ -85,6 +87,40 @@ test('endpoint_delay maps to AssemblyAI turn silence query params', async () => 
     const ws = FakeWebSocket.instances[0];
     assert.match(ws.url, /min_end_of_turn_silence_when_confident=1200/);
     assert.match(ws.url, /max_turn_silence=2000/);
+});
+
+test('playground extras map onto the streaming query string', async () => {
+    const { streamingQueryParams } = await import('../src/js/assemblyai-client.js');
+    const params = streamingQueryParams({
+        token: 'tmp_token',
+        speakerLabels: true,
+        filterProfanity: true,
+        redactPii: true,
+        minTurnSilenceMs: 400,
+        maxTurnSilenceMs: 1280,
+        vadThreshold: 0.4,
+        endOfTurnConfidence: 0.4,
+    });
+    assert.equal(params.get('speaker_labels'), 'true');
+    assert.equal(params.get('filter_profanity'), 'true');
+    assert.equal(params.get('redact_pii'), 'true');
+    assert.equal(params.get('min_end_of_turn_silence_when_confident'), '400');
+    assert.equal(params.get('max_turn_silence'), '1280');
+    assert.equal(params.get('vad_threshold'), '0.4');
+    assert.equal(params.get('end_of_turn_confidence_threshold'), '0.4');
+    const client = makeClient();
+    await client.connect({
+        speakerLabels: true,
+        filterProfanity: true,
+        minTurnSilenceMs: 400,
+        maxTurnSilenceMs: 1280,
+        vadThreshold: 0.4,
+        endOfTurnConfidence: 0.4,
+    });
+    const ws = FakeWebSocket.instances[0];
+    assert.match(ws.url, /streaming\.assemblyai\.com\/v3\/ws/);
+    assert.match(ws.url, /speaker_labels=true/);
+    assert.match(ws.url, /vad_threshold=0\.4/);
 });
 
 test('failed start does not leave a socket billing', async () => {

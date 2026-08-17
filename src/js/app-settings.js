@@ -147,6 +147,16 @@ export const appSettingsMethods = {
         document.getElementById('range-endpoint-delay')?.addEventListener('input', (e) => {
             document.getElementById('endpoint-delay-value').textContent = `${(e.target.value / 1000).toFixed(1)}s`;
         });
+        const bindAaiRange = (id, valueId, fmt) => {
+            document.getElementById(id)?.addEventListener('input', (e) => {
+                const out = document.getElementById(valueId);
+                if (out) out.textContent = fmt(e.target.value);
+            });
+        };
+        bindAaiRange('range-assemblyai-min-silence', 'assemblyai-min-silence-value', (v) => `${v}ms`);
+        bindAaiRange('range-assemblyai-max-silence', 'assemblyai-max-silence-value', (v) => `${v}ms`);
+        bindAaiRange('range-assemblyai-vad', 'assemblyai-vad-value', (v) => Number(v).toFixed(2));
+        bindAaiRange('range-assemblyai-eot', 'assemblyai-eot-value', (v) => Number(v).toFixed(2));
 
         // Toggle ElevenLabs API key visibility
         document.getElementById('btn-toggle-elevenlabs-key')?.addEventListener('click', () => {
@@ -341,10 +351,35 @@ export const appSettingsMethods = {
         if (aaiEnabled) aaiEnabled.checked = s.assemblyai_enabled !== false;
         const aaiKey = document.getElementById('input-assemblyai-key');
         if (aaiKey) aaiKey.value = s.assemblyai_api_key || '';
-        this._setSelectValue('select-assemblyai-region', s.assemblyai_region || 'eu');
         this._setSelectValue('select-assemblyai-model', s.assemblyai_streaming_model || 'universal-streaming-english');
         const aaiSpeakers = document.getElementById('check-assemblyai-speaker-labels');
         if (aaiSpeakers) aaiSpeakers.checked = !!s.assemblyai_speaker_labels;
+        const aaiMedical = document.getElementById('check-assemblyai-medical');
+        if (aaiMedical) aaiMedical.checked = !!s.assemblyai_medical;
+        const aaiPii = document.getElementById('check-assemblyai-redact-pii');
+        if (aaiPii) aaiPii.checked = !!s.assemblyai_redact_pii;
+        const aaiProfanity = document.getElementById('check-assemblyai-filter-profanity');
+        if (aaiProfanity) aaiProfanity.checked = !!s.assemblyai_filter_profanity;
+        const minSilence = s.assemblyai_min_turn_silence_ms ?? 400;
+        const maxSilence = s.assemblyai_max_turn_silence_ms ?? 1280;
+        const minEl = document.getElementById('range-assemblyai-min-silence');
+        if (minEl) minEl.value = minSilence;
+        const minVal = document.getElementById('assemblyai-min-silence-value');
+        if (minVal) minVal.textContent = `${minSilence}ms`;
+        const maxEl = document.getElementById('range-assemblyai-max-silence');
+        if (maxEl) maxEl.value = maxSilence;
+        const maxVal = document.getElementById('assemblyai-max-silence-value');
+        if (maxVal) maxVal.textContent = `${maxSilence}ms`;
+        const vad = s.assemblyai_vad_threshold ?? 0.4;
+        const vadEl = document.getElementById('range-assemblyai-vad');
+        if (vadEl) vadEl.value = vad;
+        const vadVal = document.getElementById('assemblyai-vad-value');
+        if (vadVal) vadVal.textContent = Number(vad).toFixed(2);
+        const eot = s.assemblyai_end_of_turn_confidence ?? 0.4;
+        const eotEl = document.getElementById('range-assemblyai-eot');
+        if (eotEl) eotEl.value = eot;
+        const eotVal = document.getElementById('assemblyai-eot-value');
+        if (eotVal) eotVal.textContent = Number(eot).toFixed(2);
 
         this._updateLlmProviderUI();
         this._updateChainUI();
@@ -506,9 +541,16 @@ export const appSettingsMethods = {
             ollama_model: document.getElementById('input-ollama-model')?.value.trim() || '',
             assemblyai_enabled: document.getElementById('check-assemblyai-enabled')?.checked !== false,
             assemblyai_api_key: document.getElementById('input-assemblyai-key')?.value.trim() || '',
-            assemblyai_region: document.getElementById('select-assemblyai-region')?.value || 'eu',
+            assemblyai_region: 'global',
             assemblyai_streaming_model: document.getElementById('select-assemblyai-model')?.value || 'universal-streaming-english',
             assemblyai_speaker_labels: document.getElementById('check-assemblyai-speaker-labels')?.checked || false,
+            assemblyai_medical: document.getElementById('check-assemblyai-medical')?.checked || false,
+            assemblyai_redact_pii: document.getElementById('check-assemblyai-redact-pii')?.checked || false,
+            assemblyai_filter_profanity: document.getElementById('check-assemblyai-filter-profanity')?.checked || false,
+            assemblyai_min_turn_silence_ms: parseInt(document.getElementById('range-assemblyai-min-silence')?.value || 400, 10),
+            assemblyai_max_turn_silence_ms: parseInt(document.getElementById('range-assemblyai-max-silence')?.value || 1280, 10),
+            assemblyai_vad_threshold: parseFloat(document.getElementById('range-assemblyai-vad')?.value || 0.4),
+            assemblyai_end_of_turn_confidence: parseFloat(document.getElementById('range-assemblyai-eot')?.value || 0.4),
             source_language: document.getElementById('select-source-lang').value,
             target_language: document.getElementById('select-target-lang').value,
             translation_mode: migrateTranslationMode(document.getElementById('select-translation-mode').value),
@@ -895,9 +937,8 @@ export const appSettingsMethods = {
             let ok = false;
             if (provider === 'assemblyai') {
                 const apiKey = document.getElementById('input-assemblyai-key')?.value.trim() || '';
-                const region = document.getElementById('select-assemblyai-region')?.value || 'eu';
                 if (!apiKey) throw new Error('empty');
-                ok = await invoke('assemblyai_ping', { apiKey, region });
+                ok = await invoke('assemblyai_ping', { apiKey, region: 'global' });
             } else if (provider === 'groq') {
                 const apiKey = document.getElementById('input-groq-key')?.value.trim() || '';
                 if (!apiKey) throw new Error('empty');

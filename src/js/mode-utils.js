@@ -119,9 +119,16 @@ export function clientConfigFromSettings(settings, mode = 'groq') {
         openrouterApiKey: settings.openrouter_api_key || '',
         openrouterModel: settings.openrouter_llm_model || 'openai/gpt-4o-mini',
         assemblyaiApiKey: settings.assemblyai_api_key || '',
-        assemblyaiRegion: settings.assemblyai_region || 'eu',
+        assemblyaiRegion: 'global',
         assemblyaiModel: settings.assemblyai_streaming_model || 'universal-streaming-english',
         assemblyaiSpeakerLabels: !!settings.assemblyai_speaker_labels,
+        assemblyaiMedical: !!settings.assemblyai_medical,
+        assemblyaiRedactPii: !!settings.assemblyai_redact_pii,
+        assemblyaiFilterProfanity: !!settings.assemblyai_filter_profanity,
+        assemblyaiMinTurnSilenceMs: settings.assemblyai_min_turn_silence_ms ?? 400,
+        assemblyaiMaxTurnSilenceMs: settings.assemblyai_max_turn_silence_ms ?? 1280,
+        assemblyaiVadThreshold: settings.assemblyai_vad_threshold ?? 0.4,
+        assemblyaiEndOfTurnConfidence: settings.assemblyai_end_of_turn_confidence ?? 0.4,
     };
 }
 

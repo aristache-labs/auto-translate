@@ -387,7 +387,7 @@
             <option value="local">🖥️ Local MLX</option>
           </select>
           <p class="hint" id="hint-mode-automatic">Uses the first healthy STT provider in the chain. Temporary fallback does not change this setting.</p>
-          <p class="hint" id="hint-mode-assemblyai" style="display:none">Streaming STT · EU by default · translation uses the independent chain</p>
+          <p class="hint" id="hint-mode-assemblyai" style="display:none">Streaming STT · translation uses the independent chain</p>
           <p class="hint" id="hint-mode-groq" style="display:none">Cloud · Whisper v3 · ~$0.02/hr · Fallback continues down the chain</p>
           <p class="hint" id="hint-mode-cloudflare" style="display:none">Cloud · Whisper v3 · Reliable backup engine</p>
           <p class="hint" id="hint-mode-local" style="display:none">Offline · free · ~3–4s delay</p>
@@ -442,28 +442,49 @@
             </button>
             <button id="btn-test-assemblyai" class="btn-secondary small" title="Test connection">Test</button>
           </div>
-          <div class="field-row" style="margin-top:8px">
-            <div class="field" style="flex:1">
-              <span class="field-label">Region</span>
-              <select id="select-assemblyai-region">
-                <option value="eu">EU (default)</option>
-                <option value="us">US</option>
-                <option value="global">Global / Edge</option>
-              </select>
-            </div>
-            <div class="field" style="flex:1; margin-left:8px">
-              <span class="field-label">Streaming model</span>
-              <select id="select-assemblyai-model">
-                <option value="universal-streaming-english">universal-streaming-english</option>
-                <option value="universal-streaming-multilingual">universal-streaming-multilingual</option>
-                <option value="u3-rt-pro">u3-rt-pro</option>
-                <option value="whisper-rt">whisper-rt</option>
-              </select>
-            </div>
+          <div class="field" style="margin-top:8px">
+            <span class="field-label">Streaming model</span>
+            <select id="select-assemblyai-model">
+              <option value="universal-streaming-english">universal-streaming-english</option>
+              <option value="universal-streaming-multilingual">universal-streaming-multilingual</option>
+              <option value="u3-rt-pro">u3-rt-pro</option>
+              <option value="whisper-rt">whisper-rt</option>
+            </select>
           </div>
-          <label class="checkbox-label" style="margin-top:8px">
-            <input type="checkbox" id="check-assemblyai-speaker-labels" /> Speaker labels
+          <span class="field-label" style="margin-top:12px">Additional features</span>
+          <label class="checkbox-label">
+            <input type="checkbox" id="check-assemblyai-speaker-labels" /> Speaker diarization
           </label>
+          <label class="checkbox-label">
+            <input type="checkbox" id="check-assemblyai-medical" /> Medical mode
+          </label>
+          <label class="checkbox-label">
+            <input type="checkbox" id="check-assemblyai-redact-pii" /> Redact PII
+          </label>
+          <label class="checkbox-label">
+            <input type="checkbox" id="check-assemblyai-filter-profanity" /> Filter profanity
+          </label>
+          <span class="field-label" style="margin-top:12px">Advanced</span>
+          <div class="slider-field">
+            <span class="field-label">Turn silence (min)</span>
+            <input type="range" id="range-assemblyai-min-silence" min="200" max="2000" step="40" value="400" />
+            <span id="assemblyai-min-silence-value" class="range-value">400ms</span>
+          </div>
+          <div class="slider-field">
+            <span class="field-label">Turn silence (max)</span>
+            <input type="range" id="range-assemblyai-max-silence" min="400" max="4000" step="40" value="1280" />
+            <span id="assemblyai-max-silence-value" class="range-value">1280ms</span>
+          </div>
+          <div class="slider-field">
+            <span class="field-label">VAD threshold</span>
+            <input type="range" id="range-assemblyai-vad" min="0.1" max="0.9" step="0.05" value="0.4" />
+            <span id="assemblyai-vad-value" class="range-value">0.4</span>
+          </div>
+          <div class="slider-field">
+            <span class="field-label">End of turn confidence</span>
+            <input type="range" id="range-assemblyai-eot" min="0.1" max="0.9" step="0.05" value="0.4" />
+            <span id="assemblyai-eot-value" class="range-value">0.4</span>
+          </div>
           <p class="hint">Credential test mints a short-lived token only — it does not start capture or leave a stream open.</p>
         </div>
 

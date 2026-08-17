@@ -354,19 +354,6 @@ export class TranscriptUI {
         const nextText = text || '';
         const previous = this.translationProvisionalText || '';
         const previousVisible = this.translationProvisionalVisible;
-
-        // Reject updates that diverge too much from the current draft — prevents
-        // the LLM from replacing the whole draft with a completely different sentence.
-        if (previous && nextText && previousVisible > 12) {
-            const prefix = previous.slice(0, Math.min(previousVisible + 24, previous.length));
-            const sharesPrefix = nextText.startsWith(prefix)
-                || commonPrefixLength(previous, nextText) >= prefix.length * 0.85;
-            if (!sharesPrefix) {
-                console.debug('[translation.provisional] rejected: divergent translation');
-                return;
-            }
-        }
-
         const stablePrefix = commonPrefixLength(previous, nextText);
         this.translationProvisionalVisible = this._reducedMotion
             ? textLength(nextText)
