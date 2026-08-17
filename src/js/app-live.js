@@ -15,7 +15,8 @@ import {
     canTransitionStt,
     markSttTransition,
     isCircuitBreakerOpen,
-    logProviderTransition,
+    logEngineEvent,
+    sttModelFor,
     parseProviderError,
     applyProviderError,
     translateWithChain,
@@ -153,26 +154,26 @@ export const appLiveMethods = {
         }
 
         try {
+            const sttModel = sttModelFor(settings, provider);
             if (provider === 'local-stt' || provider === 'local') {
-                console.log('[App] Starting LOCAL STT mode');
+                logEngineEvent('stt', { event: 'connecting', provider, model: sttModel });
                 await this._startLocalMode(settings);
                 this.activeSttProvider = 'local-stt';
                 this.activeSttClient = this._localAudioAdapter();
             } else {
-                console.log('[App] Starting', provider, 'STT provider');
+                logEngineEvent('stt', { event: 'connecting', provider, model: sttModel });
                 const client = this._clientForProvider(provider);
                 if (!client) {
-                    console.log('[App] No client for provider:', provider);
+                    logEngineEvent('stt', { event: 'failed', provider, model: sttModel, reason: 'no client' });
                     return false;
                 }
                 this._bindProviderClients();
                 const config = clientConfigFromSettings(settings, provider === 'cloudflare' ? 'cloudflare' : 'groq');
                 if (provider === 'assemblyai') {
-                    console.log('[App] Connecting AssemblyAI to wss://streaming.assemblyai.com/v3/ws');
                     await client.connect({
                         ...config,
                         region: 'global',
-                        model: settings.assemblyai_streaming_model || 'universal-streaming-english',
+                        model: sttModel || 'universal-streaming-english',
                         speakerLabels: !!settings.assemblyai_speaker_labels,
                         filterProfanity: !!settings.assemblyai_filter_profanity,
                         redactPii: !!settings.assemblyai_redact_pii,
@@ -185,16 +186,15 @@ export const appLiveMethods = {
                     client.connect(config);
                 }
                 if (!client.isConnected) {
-                    console.log('[App]', provider, 'failed to connect');
                     throw new Error(`${provider} failed to connect`);
                 }
                 this.activeSttProvider = provider;
                 this.activeSttClient = client;
                 this.transcriptUI.provider = provider;
-                console.log('[App]', provider, 'connected successfully');
             }
             noteProviderSuccess(key);
             markSttTransition();
+            logEngineEvent('stt', { event: 'active', provider: this.activeSttProvider, model: sttModel });
             this._updatePillState(this.activeSttProvider);
             this._updateChainUI();
             const pending = this._handoffBuffer.splice(0);
@@ -203,7 +203,12 @@ export const appLiveMethods = {
             }
             return true;
         } catch (err) {
-            console.log('[App] Failed to connect', provider, ':', err?.message, 'active:', this.activeSttProvider);
+            logEngineEvent('stt', {
+                event: 'failed',
+                provider,
+                model: sttModelFor(settings, provider),
+                reason: err?.message || err,
+            });
             applyProviderError(parseProviderError(err, { provider, capability: 'stt' }));
             return false;
         }
@@ -245,7 +250,13 @@ export const appLiveMethods = {
                     await this._restoreStoppedState();
                     return;
                 }
-                logProviderTransition(current, next, parsed.message);
+                logEngineEvent('stt', {
+                    event: 'switch',
+                    provider: next,
+                    model: sttModelFor(settings, next),
+                    previous: current,
+                    reason: parsed.message,
+                });
                 this._showToast(`Switching to ${next}`, 'info');
                 const ok = await this._connectSttProvider(next);
                 if (ok) return;
@@ -375,7 +386,7 @@ export const appLiveMethods = {
         this._liveSentAt = Date.now();
         const settings = settingsManager.get();
         const language = this._liveSourceLang || this.sessionSourceLang || settings.source_language || 'auto';
-        console.log(`[live-tx] REQUEST gen=${gen} chars=${text.length} lang=${language} provider=${this.activeSttProvider}`);
+        console.log(`[live-tx] REQUEST gen=${gen} chars=${text.length} lang=${language} stt=${this.activeSttProvider}`);
 
         try {
             const t0 = Date.now();
@@ -394,7 +405,7 @@ export const appLiveMethods = {
                 mode: 'live',
             });
             const elapsed = Date.now() - t0;
-            console.log(`[live-tx] RESPONSE gen=${gen} elapsed=${elapsed}ms provider=${result?.provider} ignored=${result?.ignored} chars=${(result?.translatedText || '').length}`);
+            console.log(`[live-tx] RESPONSE gen=${gen} elapsed=${elapsed}ms llm=${result?.provider} ignored=${result?.ignored} chars=${(result?.translatedText || '').length}`);
 
             if (result?.ignored) {
                 console.log(`[live-tx] IGNORED gen=${gen}`);
@@ -474,7 +485,7 @@ export const appLiveMethods = {
                 mode: 'final',
             });
             const elapsed = Date.now() - startedAt;
-            console.log(`[live-tx] final response segment=${segmentId} elapsed=${elapsed}ms provider=${result?.provider} ignored=${result?.ignored}`);
+            console.log(`[live-tx] final response segment=${segmentId} elapsed=${elapsed}ms llm=${result?.provider} ignored=${result?.ignored}`);
             if (result?.ignored) return;
             if (!this._translationJobs.has(segmentId)) return;
             const translated = result.translatedText || text;
@@ -499,14 +510,21 @@ export const appLiveMethods = {
         if (!this.isRunning || this._fallbackInFlight) return;
         if (this.transcriptUI.provisionalText) return;
         if (!canTransitionStt()) return;
+        const settings = settingsManager.get();
         const better = preferredRecoveryStt(
-            settingsManager.get(),
+            settings,
             this._platformContext(),
             this.activeSttProvider,
         );
         if (!better || better === this.activeSttProvider) return;
         if (better === 'assemblyai' && isCircuitBreakerOpen(breakerKey('stt', 'assemblyai'))) return;
-        logProviderTransition(this.activeSttProvider, better, 'priority recovery');
+        logEngineEvent('stt', {
+            event: 'recovery',
+            provider: better,
+            model: sttModelFor(settings, better),
+            previous: this.activeSttProvider,
+            reason: 'priority recovery',
+        });
         this._showToast(`Restoring ${better}`, 'info');
         void this._connectSttProvider(better);
     },

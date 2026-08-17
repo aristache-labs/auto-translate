@@ -14,7 +14,7 @@ const GROQ_STT_URL: &str = "https://api.groq.com/openai/v1/audio/transcriptions"
 const GROQ_CHAT_URL: &str = "https://api.groq.com/openai/v1/chat/completions";
 const GROQ_MODELS_URL: &str = "https://api.groq.com/openai/v1/models";
 const GROQ_STT_MODEL: &str = "whisper-large-v3-turbo";
-const GROQ_CHAT_MODEL: &str = "llama-3.1-8b-instant";
+const GROQ_CHAT_MODEL: &str = "openai/gpt-oss-120b";
 
 const CF_WHISPER_MODEL: &str = "@cf/openai/whisper-large-v3-turbo";
 const CF_LLM_MODEL: &str = "@cf/meta/llama-3.1-8b-instruct-fast";
@@ -258,13 +258,21 @@ fn resolve_cloudflare_llm(provided: Option<&str>) -> String {
     }
 }
 
-/// Groq chat models only — OpenRouter-style ids (vendor/model) are not valid on Groq.
+const GROQ_LLM_ALLOWED: &[&str] = &[
+    "openai/gpt-oss-120b",
+    "openai/gpt-oss-20b",
+    "meta-llama/llama-prompt-guard-2-22m",
+    "meta-llama/llama-prompt-guard-2-86m",
+    "qwen/qwen3.6-27b",
+];
+
+/// Groq chat model ids, including current vendor/model names.
 fn resolve_groq_llm(provided: Option<&str>) -> String {
     let model = resolve_model(provided, GROQ_CHAT_MODEL);
-    if model.contains('/') {
-        return GROQ_CHAT_MODEL.to_string();
+    if GROQ_LLM_ALLOWED.contains(&model.as_str()) {
+        return model;
     }
-    model
+    GROQ_CHAT_MODEL.to_string()
 }
 
 async fn groq_transcribe(
@@ -1627,6 +1635,18 @@ mod tests {
         assert_eq!(
             resolve_model(Some("llama-3.3-70b-versatile"), "fallback"),
             "llama-3.3-70b-versatile"
+        );
+    }
+
+    #[test]
+    fn resolve_groq_llm_keeps_allowed_vendor_ids() {
+        assert_eq!(
+            resolve_groq_llm(Some("openai/gpt-oss-20b")),
+            "openai/gpt-oss-20b"
+        );
+        assert_eq!(
+            resolve_groq_llm(Some("llama-3.1-8b-instant")),
+            "openai/gpt-oss-120b"
         );
     }
 

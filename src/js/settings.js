@@ -10,9 +10,10 @@ const { invoke } = window.__TAURI__.core;
 const DEFAULT_SETTINGS = {
   groq_api_key: '',
   groq_stt_model: 'whisper-large-v3-turbo',
-  groq_llm_model: 'llama-3.1-8b-instant',
+  groq_llm_model: 'openai/gpt-oss-120b',
   groq_enabled: true,
   llm_provider: 'automatic',
+  llm_fallback: true,
   openrouter_api_key: '',
   openrouter_llm_model: 'openai/gpt-4o-mini',
   openrouter_enabled: true,
@@ -96,6 +97,9 @@ async load() {
     const settings = await invoke('get_settings');
     this.settings = { ...DEFAULT_SETTINGS, ...settings };
     this.settings.translation_mode = migrateTranslationMode(this.settings.translation_mode);
+    if (this.settings.llm_provider === 'openrouter' || this.settings.llm_provider === 'engine') {
+      this.settings.llm_provider = 'automatic';
+    }
 
     // Migrate deprecated model defaults (preserve custom selections)
     this.settings = this._migrateModelDefaults(this.settings);
@@ -109,38 +113,34 @@ async load() {
 
 /**
  * Migrate deprecated model defaults while preserving custom selections
- * - Old Groq LLM: openai/gpt-oss-20b (404) → llama-3.1-8b-instant (fast, reliable)
- * - Old Cloudflare LLM: llama-3 / llama-3.1 instruct → llama-3.1-8b-instruct-fast
+ * that are still in the current allowlists.
  */
 _migrateModelDefaults(settings) {
-  const DEPRECATED_GROQ_MODEL = 'openai/gpt-oss-20b';
-  const DEPRECATED_CF_MODELS = new Set([
-    '@cf/meta/llama-3-8b-instruct',
-    '@cf/meta/llama-3.1-8b-instruct',
-  ]);
-  const DEPRECATED_GEMINI_MODELS = new Set([
-    'gemini-2.0-flash',
-    'gemini-2.5-flash',
-    'gemini-1.5-flash',
-    'gemini-1.5-pro',
-  ]);
+  const ALLOWED_GROQ_LLM = [
+    'openai/gpt-oss-120b',
+    'openai/gpt-oss-20b',
+    'meta-llama/llama-prompt-guard-2-22m',
+    'meta-llama/llama-prompt-guard-2-86m',
+    'qwen/qwen3.6-27b',
+  ];
+  const ALLOWED_CF_LLM = [
+    '@cf/meta/llama-3.1-8b-instruct-fast',
+    '@cf/qwen/qwen3-30b-a3b-fp8',
+    '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
+  ];
+  const ALLOWED_GEMINI = [
+    'gemini-3.5-flash-lite',
+    'gemini-3.1-flash-lite',
+  ];
 
-  // Groq LLM migration
-  if (settings.groq_llm_model === DEPRECATED_GROQ_MODEL) {
+  if (!ALLOWED_GROQ_LLM.includes(settings.groq_llm_model)) {
     settings.groq_llm_model = DEFAULT_SETTINGS.groq_llm_model;
-    console.debug('[Settings] Migrated deprecated Groq LLM model');
   }
-
-  // Cloudflare LLM migration (retired Workers AI models → instruct-fast)
-  if (DEPRECATED_CF_MODELS.has(settings.cloudflare_llm_model)) {
+  if (!ALLOWED_CF_LLM.includes(settings.cloudflare_llm_model)) {
     settings.cloudflare_llm_model = DEFAULT_SETTINGS.cloudflare_llm_model;
-    console.debug('[Settings] Migrated deprecated Cloudflare LLM model');
   }
-
-  // Gemini — retire models that 404 on current Google AI Studio catalogs
-  if (DEPRECATED_GEMINI_MODELS.has(settings.gemini_model)) {
+  if (!ALLOWED_GEMINI.includes(settings.gemini_model)) {
     settings.gemini_model = DEFAULT_SETTINGS.gemini_model;
-    console.debug('[Settings] Migrated deprecated Gemini model');
   }
 
   return settings;

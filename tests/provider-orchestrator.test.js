@@ -35,7 +35,7 @@ const FULL_SETTINGS = {
   assemblyai_api_key: 'aai_key',
   groq_enabled: true,
   groq_api_key: 'gsk_123',
-  groq_llm_model: 'llama-3.1-8b-instant',
+  groq_llm_model: 'openai/gpt-oss-120b',
   cloudflare_enabled: true,
   cloudflare_account_id: 'acct',
   cloudflare_api_token: 'tok',
@@ -150,16 +150,36 @@ test('unsupported Local STT is skipped on Windows', () => {
   assert.deepEqual(chain, ['assemblyai', 'groq', 'cloudflare']);
 });
 
-test('effective translation order changes with active STT provider', () => {
-  const groq = getEffectiveTranslationChain(FULL_SETTINGS, 'groq');
-  assert.deepEqual(groq, ['openrouter', 'groq-llm', 'cloudflare-llm', 'azure', 'gemini', 'ollama']);
-  const cf = getEffectiveTranslationChain(FULL_SETTINGS, 'cloudflare');
-  assert.deepEqual(cf, ['openrouter', 'cloudflare-llm', 'groq-llm', 'azure', 'gemini', 'ollama']);
-  const aai = getEffectiveTranslationChain(FULL_SETTINGS, 'assemblyai');
-  assert.deepEqual(aai, ['openrouter', 'groq-llm', 'cloudflare-llm', 'azure', 'gemini', 'ollama']);
-  const local = getEffectiveTranslationChain(FULL_SETTINGS, 'local-stt');
-  assert.deepEqual(local, ['openrouter', 'groq-llm', 'cloudflare-llm', 'azure', 'gemini', 'ollama']);
-  assert.equal(aai.includes('assemblyai'), false);
+test('effective translation order is Azure → Gemini → Cloudflare → Groq → Ollama', () => {
+  const expected = ['azure', 'gemini', 'cloudflare-llm', 'groq-llm', 'ollama'];
+  assert.deepEqual(getEffectiveTranslationChain(FULL_SETTINGS, 'groq'), expected);
+  assert.deepEqual(getEffectiveTranslationChain(FULL_SETTINGS, 'cloudflare'), expected);
+  assert.deepEqual(getEffectiveTranslationChain(FULL_SETTINGS, 'assemblyai'), expected);
+  assert.deepEqual(getEffectiveTranslationChain(FULL_SETTINGS, 'local-stt'), expected);
+  assert.equal(expected.includes('openrouter'), false);
+  assert.equal(expected.includes('assemblyai'), false);
+});
+
+test('manual LLM with fallback starts at the selected provider then follows Automatic', () => {
+  assert.deepEqual(getEffectiveTranslationChain({
+    ...FULL_SETTINGS,
+    llm_provider: 'azure',
+    llm_fallback: true,
+  }), ['azure', 'gemini', 'cloudflare-llm', 'groq-llm', 'ollama']);
+  assert.deepEqual(getEffectiveTranslationChain({
+    ...FULL_SETTINGS,
+    llm_provider: 'gemini',
+    llm_fallback: true,
+  }), ['gemini', 'azure', 'cloudflare-llm', 'groq-llm', 'ollama']);
+  assert.deepEqual(getEffectiveTranslationChain({
+    ...FULL_SETTINGS,
+    llm_provider: 'groq-llm',
+    llm_fallback: false,
+  }), ['groq-llm']);
+  assert.deepEqual(getEffectiveTranslationChain({
+    ...FULL_SETTINGS,
+    llm_provider: 'openrouter',
+  }), ['azure', 'gemini', 'cloudflare-llm', 'groq-llm', 'ollama']);
 });
 
 test('manual Groq primary starts at Groq then continues down the chain', () => {
@@ -176,8 +196,8 @@ test('translation failures rotate through the configured order and ignore stale 
   const calls = [];
   const invoke = async (cmd) => {
     calls.push(cmd);
-    if (cmd === 'openrouter_translate_text') throw new Error('HTTP 429');
-    if (cmd === 'groq_translate_text') throw new Error('HTTP 500');
+    if (cmd === 'azure_translate_text') throw new Error('HTTP 429');
+    if (cmd === 'gemini_translate_text') throw new Error('HTTP 500');
     return { translated_text: 'ok-cf' };
   };
   const result = await translateWithChain({
@@ -193,8 +213,8 @@ test('translation failures rotate through the configured order and ignore stale 
   });
   assert.equal(result.translatedText, 'ok-cf');
   assert.equal(result.provider, 'cloudflare-llm');
-  assert.ok(calls.includes('openrouter_translate_text'));
-  assert.ok(calls.includes('groq_translate_text'));
+  assert.ok(calls.includes('azure_translate_text'));
+  assert.ok(calls.includes('gemini_translate_text'));
   assert.ok(calls.includes('cloudflare_translate_text'));
 
   const stale = await translateWithChain({

@@ -50,9 +50,12 @@ pub struct Settings {
     /// Cloudflare Workers AI LLM used for translation
     #[serde(default = "default_cloudflare_llm_model")]
     pub cloudflare_llm_model: String,
-    /// LLM source for cloud engines: "openrouter" | "engine"
+    /// LLM source: "automatic" | "azure" | "gemini" | "cloudflare-llm" | "groq-llm" | "ollama"
     #[serde(default = "default_llm_provider")]
     pub llm_provider: String,
+    /// When a specific LLM is selected, continue down the automatic chain on failure.
+    #[serde(default = "default_true")]
+    pub llm_fallback: bool,
     /// OpenRouter API key (chat completions)
     #[serde(default)]
     pub openrouter_api_key: String,
@@ -211,6 +214,7 @@ impl Default for Settings {
             cloudflare_stt_model: default_cloudflare_stt_model(),
             cloudflare_llm_model: default_cloudflare_llm_model(),
             llm_provider: default_llm_provider(),
+            llm_fallback: true,
             groq_enabled: true,
             cloudflare_enabled: true,
             openrouter_enabled: true,
@@ -285,7 +289,7 @@ fn default_groq_stt_model() -> String {
 }
 
 fn default_groq_llm_model() -> String {
-    "llama-3.1-8b-instant".to_string()
+    "openai/gpt-oss-120b".to_string()
 }
 
 fn default_cloudflare_stt_model() -> String {
@@ -297,7 +301,7 @@ fn default_cloudflare_llm_model() -> String {
 }
 
 fn default_llm_provider() -> String {
-    "openrouter".to_string()
+    "automatic".to_string()
 }
 
 fn default_openrouter_llm_model() -> String {
@@ -410,12 +414,13 @@ mod tests {
         let s = Settings::default();
         assert_eq!(s.translation_mode, "groq");
         assert_eq!(s.groq_stt_model, "whisper-large-v3-turbo");
-        assert_eq!(s.groq_llm_model, "llama-3.1-8b-instant");
+        assert_eq!(s.groq_llm_model, "openai/gpt-oss-120b");
         assert_eq!(
             s.cloudflare_llm_model,
             "@cf/meta/llama-3.1-8b-instruct-fast"
         );
-        assert_eq!(s.llm_provider, "openrouter");
+        assert_eq!(s.llm_provider, "automatic");
+        assert!(s.llm_fallback);
         assert_eq!(s.openrouter_llm_model, "openai/gpt-4o-mini");
         assert!(s.groq_enabled);
         assert!(s.cloudflare_enabled);

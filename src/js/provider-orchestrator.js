@@ -14,10 +14,26 @@ export const ERROR_TYPES = {
 
 export const ERROR_KINDS = ERROR_TYPES;
 
+export const TRANSLATION_CHAIN_DEFAULT = ['azure', 'gemini', 'cloudflare-llm', 'groq-llm', 'ollama'];
+
 export const PROVIDER_CHAINS = {
   stt: STT_CHAIN_DEFAULT,
-  translation: ['openrouter', 'stt-engine', 'azure', 'gemini', 'ollama'],
+  translation: TRANSLATION_CHAIN_DEFAULT,
 };
+
+const LLM_PROVIDER_IDS = TRANSLATION_CHAIN_DEFAULT;
+const LLM_PROVIDER_ALIASES = {
+  automatic: 'automatic',
+  openrouter: 'automatic',
+  engine: 'automatic',
+  cloudflare: 'cloudflare-llm',
+  groq: 'groq-llm',
+};
+
+export function migrateLlmProvider(value) {
+  if (value === 'automatic' || LLM_PROVIDER_IDS.includes(value)) return value;
+  return LLM_PROVIDER_ALIASES[value] || 'automatic';
+}
 
 const MIN_DWELL_MS = 8000;
 const DEFAULT_QUOTA_MS = 60_000;
@@ -312,6 +328,100 @@ function isTranslationConfigured(settings, id) {
   }
 }
 
+export function sttModelFor(settings = {}, provider) {
+  switch (provider) {
+    case 'assemblyai':
+      return settings.assemblyai_streaming_model || 'universal-streaming-english';
+    case 'groq':
+      return settings.groq_stt_model || 'whisper-large-v3-turbo';
+    case 'cloudflare':
+      return settings.cloudflare_stt_model || '@cf/openai/whisper-large-v3-turbo';
+    case 'local-stt':
+    case 'local':
+      return 'mlx';
+    default:
+      return '';
+  }
+}
+
+export function translationModelFor(settings = {}, provider) {
+  switch (provider) {
+    case 'openrouter':
+      return settings.openrouter_llm_model || 'openai/gpt-4o-mini';
+    case 'groq-llm':
+      return settings.groq_llm_model || 'openai/gpt-oss-120b';
+    case 'cloudflare-llm':
+      return settings.cloudflare_llm_model || '@cf/meta/llama-3.1-8b-instruct-fast';
+    case 'azure':
+      return 'microsoft-translator';
+    case 'gemini':
+      return settings.gemini_model || 'gemini-3.1-flash-lite';
+    case 'ollama':
+      return settings.ollama_model || '';
+    default:
+      return '';
+  }
+}
+
+function formatEngineEntry(id, model) {
+  return model ? `${id} (${model})` : String(id || '');
+}
+
+function emitEngineLog(side, message) {
+  const line = `[${side}] ${message}`;
+  console.log(line);
+  try {
+    const invoke = typeof window !== 'undefined' && window.__TAURI__?.core?.invoke;
+    if (typeof invoke === 'function') {
+      invoke('frontend_log', { level: 'info', message: line }).catch(() => {});
+    }
+  } catch {
+    /* node tests / no tauri */
+  }
+}
+
+const lastActiveEngine = { stt: '', llm: '' };
+
+export function resetEngineLogState() {
+  lastActiveEngine.stt = '';
+  lastActiveEngine.llm = '';
+}
+
+export function logEngineEvent(side, {
+  event = 'active',
+  provider,
+  model = '',
+  previous = '',
+  reason = '',
+  mode = '',
+} = {}) {
+  const key = `${provider || ''}|${model || ''}`;
+  if ((event === 'active' || event === 'connected') && lastActiveEngine[side] === key) return;
+  if (event === 'active' || event === 'connected') lastActiveEngine[side] = key;
+
+  const modelPart = model ? ` model=${model}` : '';
+  const modePart = mode ? ` (${mode})` : '';
+  const why = reason ? ` reason=${sanitizeErrorMessage(reason)}` : '';
+  let msg;
+  if (event === 'fallback' || event === 'recovery' || event === 'switch') {
+    msg = `${event} ${previous || '(none)'} → ${provider}${modelPart}${why}`;
+  } else if (event === 'failed') {
+    msg = `failed ${provider}${modelPart}: ${sanitizeErrorMessage(reason || 'unknown error')}`;
+  } else {
+    msg = `${event} ${provider}${modelPart}${modePart}`;
+  }
+  emitEngineLog(side, msg);
+}
+
+export function logSessionEngines(settings = {}, platform = {}) {
+  const sttMode = settings.translation_mode || 'automatic';
+  const llmMode = migrateLlmProvider(settings.llm_provider);
+  const sttOrder = getSttStartOrder(settings, platform);
+  const llmOrder = getEffectiveTranslationChain(settings, sttOrder[0] || 'groq');
+  emitEngineLog('stt', `mode=${sttMode} chain=${sttOrder.map((id) => formatEngineEntry(id, sttModelFor(settings, id))).join(' → ') || '(none)'}`);
+  emitEngineLog('llm', `mode=${llmMode} chain=${llmOrder.map((id) => formatEngineEntry(id, translationModelFor(settings, id))).join(' → ') || '(none)'}`);
+}
+
 export function getEffectiveSTTChain(settings = {}, platform = {}) {
   return STT_CHAIN_DEFAULT.filter((id) => {
     if (!isSttConfigured(settings, id, platform)) return false;
@@ -319,23 +429,16 @@ export function getEffectiveSTTChain(settings = {}, platform = {}) {
   });
 }
 
-function translationOrderForStt(activeStt) {
-  if (activeStt === 'cloudflare') {
-    return ['openrouter', 'cloudflare-llm', 'groq-llm', 'azure', 'gemini', 'ollama'];
-  }
-  if (activeStt === 'local-stt' || activeStt === 'local') {
-    return ['openrouter', 'groq-llm', 'cloudflare-llm', 'azure', 'gemini', 'ollama'];
-  }
-  return ['openrouter', 'groq-llm', 'cloudflare-llm', 'azure', 'gemini', 'ollama'];
+export function translationOrderForSettings(settings = {}) {
+  const llm = migrateLlmProvider(settings.llm_provider);
+  const fallback = settings.llm_fallback !== false;
+  if (llm === 'automatic') return [...TRANSLATION_CHAIN_DEFAULT];
+  if (!fallback) return [llm];
+  return [llm, ...TRANSLATION_CHAIN_DEFAULT.filter((id) => id !== llm)];
 }
 
-export function getEffectiveTranslationChain(settings = {}, sttProvider = 'groq') {
-  let order = translationOrderForStt(sttProvider);
-  const llm = settings.llm_provider || 'automatic';
-  if (llm === 'engine') {
-    order = order.filter((id) => id !== 'openrouter');
-  }
-  return order.filter((id) => {
+export function getEffectiveTranslationChain(settings = {}, _sttProvider = 'groq') {
+  return translationOrderForSettings(settings).filter((id) => {
     if (!isTranslationConfigured(settings, id)) return false;
     return !isCircuitBreakerOpen(breakerKey('translation', id));
   });
@@ -385,11 +488,11 @@ export function getSessionStickyProvider() {
 export function clearSessionState() {
   sessionStickyProvider = null;
   lastSttTransitionAt = 0;
+  resetEngineLogState();
 }
 
 export function logProviderTransition(from, to, reason) {
-  const timestamp = new Date(now()).toISOString();
-  console.debug(`[Provider] ${timestamp} transitioning from ${from} to ${to}: ${sanitizeErrorMessage(reason)}`);
+  logEngineEvent('stt', { event: 'switch', provider: to, previous: from, reason });
 }
 
 export function allocateSegmentId() {
@@ -528,6 +631,7 @@ export async function translateWithChain({
   const chain = getEffectiveTranslationChain(settings, activeStt);
   let lastError = null;
   const startedAt = now();
+  let previousFailed = null;
 
   for (const provider of chain) {
     if (typeof isCurrent === 'function' && !isCurrent(segmentId, generation)) {
@@ -537,6 +641,16 @@ export async function translateWithChain({
     if (isCircuitBreakerOpen(key)) continue;
     const state = breakerState(key);
     if (state?.state === 'half-open') noteHalfOpenProbe(key);
+    const model = translationModelFor(settings, provider);
+    if (previousFailed) {
+      logEngineEvent('llm', {
+        event: 'fallback',
+        provider,
+        model,
+        previous: previousFailed,
+        reason: lastError?.message,
+      });
+    }
 
     try {
       const result = await withTimeout(
@@ -549,6 +663,7 @@ export async function translateWithChain({
       }
       const translatedText = translatedFromResult(result) || source;
       noteProviderSuccess(key);
+      logEngineEvent('llm', { event: 'active', provider, model, mode });
       console.debug(
         `[timing] translation.response mode=${mode} provider=${provider} ms=${now() - startedAt}`,
       );
@@ -560,6 +675,8 @@ export async function translateWithChain({
         capability: 'translation',
       });
       lastError = parsed;
+      previousFailed = provider;
+      logEngineEvent('llm', { event: 'failed', provider, model, reason: parsed.message });
       // Live path never retries the same provider — fall through immediately.
       if (
         allowRetry
@@ -578,6 +695,8 @@ export async function translateWithChain({
             return { ignored: true, segmentId, generation };
           }
           noteProviderSuccess(key);
+          previousFailed = null;
+          logEngineEvent('llm', { event: 'active', provider, model, mode: `${mode} retry` });
           console.debug(
             `[timing] translation.response mode=${mode} provider=${provider} retry=1 ms=${now() - startedAt}`,
           );
@@ -611,11 +730,18 @@ export default {
   sanitizeErrorMessage,
   formatErrorNotification,
   getEffectiveTranslationChain,
+  translationOrderForSettings,
+  migrateLlmProvider,
+  TRANSLATION_CHAIN_DEFAULT,
   getEffectiveSTTChain,
   setSessionStickyProvider,
   getSessionStickyProvider,
   clearSessionState,
   logProviderTransition,
+  logEngineEvent,
+  logSessionEngines,
+  sttModelFor,
+  translationModelFor,
   parseProviderError,
   createProviderError,
   translateWithChain,

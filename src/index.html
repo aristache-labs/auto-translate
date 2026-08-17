@@ -396,14 +396,21 @@
         <div class="settings-section" id="section-llm-provider">
           <span class="field-label">LLM</span>
           <select id="select-llm-provider">
-            <option value="automatic">Automatic — OpenRouter → engine LLM → Azure → Gemini → Ollama</option>
-            <option value="openrouter">OpenRouter</option>
-            <option value="engine">Same as engine</option>
+            <option value="automatic">Automatic — Azure Translator → Gemini Flash-Lite → Cloudflare LLM → Groq LLM → Ollama</option>
+            <option value="azure">Azure Translator</option>
+            <option value="gemini">Gemini Flash-Lite</option>
+            <option value="cloudflare-llm">Cloudflare LLM</option>
+            <option value="groq-llm">Groq LLM</option>
+            <option value="ollama">Ollama</option>
           </select>
-          <p class="hint">Engine above is STT. Translation rotates independently. AssemblyAI is STT-only.</p>
+          <label class="checkbox-label" id="label-llm-fallback" style="margin-top:8px; display:none">
+            <input type="checkbox" id="check-llm-fallback" checked /> Fallback if this provider fails
+          </label>
+          <p class="hint" id="hint-llm-fallback" style="display:none">Uses the selected LLM first, then Azure → Gemini → Cloudflare → Groq → Ollama (skipping the one you picked).</p>
+          <p class="hint" id="hint-llm-automatic">Engine above is STT. Translation uses Azure → Gemini → Cloudflare → Groq → Ollama independently.</p>
         </div>
 
-        <div class="settings-section" id="section-openrouter-key">
+        <div class="settings-section" id="section-openrouter-key" style="display:none">
           <span class="field-label">
             OpenRouter API Key
             <span id="key-status-openrouter" class="key-status"></span>
@@ -509,10 +516,11 @@
             <option value="whisper-large-v3">STT · whisper-large-v3</option>
           </select>
           <select id="select-groq-llm-model" style="margin-top:6px">
-            <option value="llama-3.1-8b-instant">LLM · llama-3.1-8b-instant (Default)</option>
-            <option value="llama-3.1-8b-instant">LLM · llama-3.1-8b-instant</option>
-            <option value="llama-3.3-70b-versatile">LLM · llama-3.3-70b-versatile</option>
-            <option value="mixtral-8x7b-32768">LLM · mixtral-8x7b-32768</option>
+            <option value="openai/gpt-oss-120b">LLM · openai/gpt-oss-120b (Default)</option>
+            <option value="openai/gpt-oss-20b">LLM · openai/gpt-oss-20b</option>
+            <option value="meta-llama/llama-prompt-guard-2-22m">LLM · meta-llama/llama-prompt-guard-2-22m</option>
+            <option value="meta-llama/llama-prompt-guard-2-86m">LLM · meta-llama/llama-prompt-guard-2-86m</option>
+            <option value="qwen/qwen3.6-27b">LLM · qwen/qwen3.6-27b</option>
           </select>
         </div>
 
@@ -547,6 +555,8 @@
           </select>
           <select id="select-cloudflare-llm-model" style="margin-top:6px">
             <option value="@cf/meta/llama-3.1-8b-instruct-fast">LLM · llama-3.1-8b-instruct-fast (Default)</option>
+            <option value="@cf/qwen/qwen3-30b-a3b-fp8">LLM · qwen3-30b-a3b-fp8</option>
+            <option value="@cf/meta/llama-3.3-70b-instruct-fp8-fast">LLM · llama-3.3-70b-instruct-fp8-fast</option>
           </select>
         </div>
 
@@ -597,13 +607,8 @@
           </div>
           <span class="field-label" style="margin-top:10px">Gemini Model</span>
           <select id="select-gemini-model">
-            <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite (Recommended · translation)</option>
-            <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite (fast · cheap)</option>
-            <option value="gemini-3.7-flash">gemini-3.7-flash (latest Flash)</option>
-            <option value="gemini-3.6-flash">gemini-3.6-flash</option>
-            <option value="gemini-3.5-flash">gemini-3.5-flash</option>
-            <option value="gemini-flash-lite-latest">gemini-flash-lite-latest (alias)</option>
-            <option value="gemini-flash-latest">gemini-flash-latest (alias)</option>
+            <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite</option>
+            <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite (Default)</option>
           </select>
           <p class="hint">Free tier — provider limits apply · Translation-only forced prompt</p>
         </div>
@@ -631,7 +636,7 @@
           <span class="field-label">Provider Fallback Chains</span>
           <div class="chain-box" style="background: rgba(255,255,255,0.03); padding: 8px 12px; border-radius: 6px; font-size: 12px; margin-top: 6px;">
             <div><strong>STT Chain:</strong> <span id="chain-stt-display">AssemblyAI → Groq → Cloudflare → Local STT</span></div>
-            <div style="margin-top: 4px;"><strong>Translation Chain:</strong> <span id="chain-translation-display">OpenRouter → engine LLM → Azure Translator → Gemini → Local Ollama</span></div>
+            <div style="margin-top: 4px;"><strong>Translation Chain:</strong> <span id="chain-translation-display">Azure Translator → Gemini Flash-Lite → Cloudflare LLM → Groq LLM → Ollama</span></div>
             <div style="margin-top: 4px;"><strong>Runtime STT:</strong> <span id="chain-runtime-stt">—</span></div>
           </div>
           <div style="margin-top: 8px; display: flex; align-items: center; justify-content: space-between;">

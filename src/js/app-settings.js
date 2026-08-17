@@ -9,6 +9,7 @@ import {
     getEffectiveTranslationChain,
     resetAllCircuitBreakers,
     getCircuitBreakerStatuses,
+    migrateLlmProvider,
 } from './provider-orchestrator.js';
 import { ollamaTranslator } from './ollama-translator.js';
 import {
@@ -56,6 +57,7 @@ export const appSettingsMethods = {
         this._on('input-openrouter-key', 'input', () => this._refreshKeyStatus());
         this._on('btn-test-openrouter', 'click', () => this._testConnection('openrouter'));
         this._on('select-llm-provider', 'change', () => this._updateLlmProviderUI());
+        this._on('check-llm-fallback', 'change', () => this._updateChainUI());
         this._on('btn-toggle-cloudflare-token', 'click', () => {
             const input = document.getElementById('input-cloudflare-token');
             if (input) input.type = input.type === 'password' ? 'text' : 'password';
@@ -83,7 +85,7 @@ export const appSettingsMethods = {
             'input-cloudflare-token', 'input-azure-key', 'check-azure-enabled',
             'input-gemini-key', 'check-gemini-enabled', 'input-ollama-model',
             'check-ollama-enabled', 'input-assemblyai-key', 'check-assemblyai-enabled',
-            'select-translation-mode', 'select-llm-provider'
+            'select-translation-mode', 'select-llm-provider', 'check-llm-fallback'
         ];
         refreshChainInputs.forEach(id => {
             this._on(id, 'change', () => this._updateChainUI());
@@ -313,12 +315,14 @@ export const appSettingsMethods = {
         const cfToken = document.getElementById('input-cloudflare-token');
         if (cfToken) cfToken.value = s.cloudflare_api_token || '';
         this._setSelectValue('select-groq-stt-model', s.groq_stt_model || 'whisper-large-v3-turbo');
-        this._setSelectValue('select-groq-llm-model', s.groq_llm_model || 'llama-3.1-8b-instant');
+        this._setSelectValue('select-groq-llm-model', s.groq_llm_model || 'openai/gpt-oss-120b');
         this._setSelectValue('select-cloudflare-stt-model', s.cloudflare_stt_model || '@cf/openai/whisper-large-v3-turbo');
         this._setSelectValue('select-cloudflare-llm-model', s.cloudflare_llm_model || '@cf/meta/llama-3.1-8b-instruct-fast');
         const orKey = document.getElementById('input-openrouter-key');
         if (orKey) orKey.value = s.openrouter_api_key || '';
-        this._setSelectValue('select-llm-provider', s.llm_provider || 'openrouter');
+        this._setSelectValue('select-llm-provider', migrateLlmProvider(s.llm_provider));
+        const llmFallback = document.getElementById('check-llm-fallback');
+        if (llmFallback) llmFallback.checked = s.llm_fallback !== false;
         const orModel = document.getElementById('input-openrouter-llm-model');
         if (orModel) orModel.value = s.openrouter_llm_model || 'openai/gpt-4o-mini';
 
@@ -521,12 +525,13 @@ export const appSettingsMethods = {
         const settings = {
             groq_api_key: document.getElementById('input-groq-key')?.value.trim() || '',
             groq_stt_model: document.getElementById('select-groq-stt-model')?.value || 'whisper-large-v3-turbo',
-            groq_llm_model: document.getElementById('select-groq-llm-model')?.value || 'llama-3.1-8b-instant',
+            groq_llm_model: document.getElementById('select-groq-llm-model')?.value || 'openai/gpt-oss-120b',
             cloudflare_account_id: document.getElementById('input-cloudflare-account-id')?.value.trim() || '',
             cloudflare_api_token: document.getElementById('input-cloudflare-token')?.value.trim() || '',
             cloudflare_stt_model: document.getElementById('select-cloudflare-stt-model')?.value || '@cf/openai/whisper-large-v3-turbo',
             cloudflare_llm_model: document.getElementById('select-cloudflare-llm-model')?.value || '@cf/meta/llama-3.1-8b-instruct-fast',
-            llm_provider: document.getElementById('select-llm-provider')?.value || 'openrouter',
+            llm_provider: migrateLlmProvider(document.getElementById('select-llm-provider')?.value),
+            llm_fallback: document.getElementById('check-llm-fallback')?.checked !== false,
             openrouter_api_key: document.getElementById('input-openrouter-key')?.value.trim() || '',
             openrouter_llm_model: document.getElementById('input-openrouter-llm-model')?.value.trim() || 'openai/gpt-4o-mini',
             azure_translator_enabled: document.getElementById('check-azure-enabled')?.checked || false,
@@ -840,17 +845,24 @@ export const appSettingsMethods = {
 
     _updateLlmProviderUI() {
         const mode = migrateTranslationMode(document.getElementById('select-translation-mode')?.value);
-        const llm = document.getElementById('select-llm-provider')?.value || 'automatic';
+        const llm = migrateLlmProvider(document.getElementById('select-llm-provider')?.value);
         const isLocal = mode === 'local';
-        const useOpenRouter = !isLocal && (llm === 'openrouter' || llm === 'automatic');
+        const isAutomatic = llm === 'automatic';
         const sectionLlm = document.getElementById('section-llm-provider');
         const sectionOr = document.getElementById('section-openrouter-key');
+        const labelFallback = document.getElementById('label-llm-fallback');
+        const hintFallback = document.getElementById('hint-llm-fallback');
+        const hintAuto = document.getElementById('hint-llm-automatic');
         if (sectionLlm) sectionLlm.style.display = isLocal ? 'none' : '';
-        if (sectionOr) sectionOr.style.display = useOpenRouter ? '' : 'none';
+        if (sectionOr) sectionOr.style.display = 'none';
+        if (labelFallback) labelFallback.style.display = (!isLocal && !isAutomatic) ? '' : 'none';
+        if (hintFallback) hintFallback.style.display = (!isLocal && !isAutomatic) ? '' : 'none';
+        if (hintAuto) hintAuto.style.display = (!isLocal && isAutomatic) ? '' : 'none';
         const groqLlm = document.getElementById('select-groq-llm-model');
         const cfLlm = document.getElementById('select-cloudflare-llm-model');
-        if (groqLlm) groqLlm.style.display = useOpenRouter ? 'none' : '';
-        if (cfLlm) cfLlm.style.display = useOpenRouter ? 'none' : '';
+        if (groqLlm) groqLlm.style.display = '';
+        if (cfLlm) cfLlm.style.display = '';
+        this._updateChainUI();
     },
 
 
@@ -1013,7 +1025,8 @@ export const appSettingsMethods = {
             gemini_api_key: document.getElementById('input-gemini-key')?.value.trim() || settings.gemini_api_key,
             ollama_enabled: document.getElementById('check-ollama-enabled')?.checked ?? settings.ollama_enabled,
             ollama_model: document.getElementById('input-ollama-model')?.value.trim() || settings.ollama_model,
-            llm_provider: document.getElementById('select-llm-provider')?.value || settings.llm_provider,
+            llm_provider: migrateLlmProvider(document.getElementById('select-llm-provider')?.value || settings.llm_provider),
+            llm_fallback: document.getElementById('check-llm-fallback')?.checked ?? settings.llm_fallback,
         };
 
         const platform = this._platformContext();

@@ -77,7 +77,7 @@ test('effective translation chain reflects active STT engine and enabled adapter
         ...settings,
         groq_api_key: 'gsk_123',
     }, 'groq');
-    assert.deepEqual(transChain, ['openrouter', 'groq-llm', 'azure', 'gemini', 'ollama']);
+    assert.deepEqual(transChain, ['azure', 'gemini', 'groq-llm', 'ollama']);
 });
 
 test('single flight fallback executes exactly once concurrently', async () => {

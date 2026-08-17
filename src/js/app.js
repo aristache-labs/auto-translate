@@ -20,6 +20,8 @@ import { assemblyaiClient } from './assemblyai-client.js';
 import {
     getSttStartOrder,
     clearSessionState,
+    logSessionEngines,
+    migrateLlmProvider,
 } from './provider-orchestrator.js';
 import {
     migrateTranslationMode,
@@ -588,8 +590,15 @@ class App {
                     : !!(s[keyField[mode]] || '').trim());
         const subT = document.getElementById('card-translation-sub');
         if (subT) {
-            const llm = s.llm_provider || 'automatic';
-            const llmNames = { automatic: 'Auto', openrouter: 'OpenRouter', engine: 'Engine' };
+            const llm = migrateLlmProvider(s.llm_provider);
+            const llmNames = {
+                automatic: 'Auto',
+                azure: 'Azure',
+                gemini: 'Gemini',
+                'cloudflare-llm': 'Cloudflare',
+                'groq-llm': 'Groq',
+                ollama: 'Ollama',
+            };
             const llmName = mode === 'local' ? 'Local' : (llmNames[llm] || 'Auto');
             subT.textContent =
                 `STT ${engineNames[mode] || mode} · LLM ${llmName} · ${s.source_language || 'auto'} → ${s.target_language || 'vi'}` +
@@ -652,7 +661,7 @@ class App {
     async start() {
         const settings = settingsManager.get();
         this.translationMode = migrateTranslationMode(settings.translation_mode);
-        console.log('[App] start() called, translation_mode:', this.translationMode, 'activeSttProvider:', this.activeSttProvider, 'isRunning:', this.isRunning);
+        logSessionEngines(settings, this._platformContext());
 
         if (this.translationMode === 'local' && !this.isAppleSilicon) {
             this._showToast('Local MLX only runs on macOS Apple Silicon. Choose another engine in Settings.', 'error');
@@ -661,7 +670,6 @@ class App {
         }
 
         const startOrder = getSttStartOrder(settings, this._platformContext());
-        console.log('[App] STT start order:', startOrder, 'assemblyai_key:', !!settings.assemblyai_api_key, 'groq_key:', !!settings.groq_api_key);
         if (!startOrder.length) {
             this._showToast('No STT providers are configured. Add credentials in Settings.', 'error');
             this._showView('settings');
