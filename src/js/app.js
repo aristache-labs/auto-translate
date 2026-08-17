@@ -595,7 +595,6 @@ class App {
                 automatic: 'Auto',
                 azure: 'Azure',
                 gemini: 'Gemini',
-                'cloudflare-llm': 'Cloudflare',
                 ollama: 'Ollama',
             };
             const llmName = mode === 'local' ? 'Local' : (llmNames[llm] || 'Auto');

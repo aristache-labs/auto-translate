@@ -47,10 +47,7 @@ pub struct Settings {
     /// Cloudflare Whisper model
     #[serde(default = "default_cloudflare_stt_model")]
     pub cloudflare_stt_model: String,
-    /// Cloudflare Workers AI LLM used for translation
-    #[serde(default = "default_cloudflare_llm_model")]
-    pub cloudflare_llm_model: String,
-    /// LLM source: "automatic" | "azure" | "gemini" | "cloudflare-llm" | "ollama"
+    /// LLM source: "automatic" | "azure" | "gemini" | "ollama"
     #[serde(default = "default_llm_provider")]
     pub llm_provider: String,
     /// When a specific LLM is selected, continue down the automatic chain on failure.
@@ -203,7 +200,6 @@ impl Default for Settings {
             groq_stt_model: default_groq_stt_model(),
             groq_llm_model: default_groq_llm_model(),
             cloudflare_stt_model: default_cloudflare_stt_model(),
-            cloudflare_llm_model: default_cloudflare_llm_model(),
             llm_provider: default_llm_provider(),
             llm_fallback: true,
             groq_enabled: true,
@@ -282,10 +278,6 @@ fn default_groq_llm_model() -> String {
 
 fn default_cloudflare_stt_model() -> String {
     "@cf/openai/whisper-large-v3-turbo".to_string()
-}
-
-fn default_cloudflare_llm_model() -> String {
-    "@cf/meta/llama-3.1-8b-instruct-fp8-fast".to_string()
 }
 
 fn default_llm_provider() -> String {
@@ -399,10 +391,6 @@ mod tests {
         assert_eq!(s.translation_mode, "groq");
         assert_eq!(s.groq_stt_model, "whisper-large-v3-turbo");
         assert_eq!(s.groq_llm_model, "openai/gpt-oss-120b");
-        assert_eq!(
-            s.cloudflare_llm_model,
-            "@cf/meta/llama-3.1-8b-instruct-fp8-fast"
-        );
         assert_eq!(s.llm_provider, "automatic");
         assert!(s.llm_fallback);
         assert!(s.groq_enabled);

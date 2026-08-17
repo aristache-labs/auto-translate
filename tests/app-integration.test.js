@@ -17,23 +17,17 @@ test('deprecated model migration updates obsolete defaults while keeping custom 
     // Model defaults migration simulation
     const oldSettings = {
         groq_llm_model: 'llama-3.1-8b-instant',
-        cloudflare_llm_model: '@cf/meta/llama-3.1-8b-instruct',
         groq_stt_model: 'whisper-large-v3-turbo',
         custom_model: 'my-custom-model',
     };
 
     const DEPRECATED_GROQ_MODEL = 'llama-3.1-8b-instant';
-    const DEPRECATED_CF_MODEL = '@cf/meta/llama-3.1-8b-instruct';
 
     if (oldSettings.groq_llm_model === DEPRECATED_GROQ_MODEL) {
         oldSettings.groq_llm_model = 'openai/gpt-oss-20b';
     }
-    if (oldSettings.cloudflare_llm_model === DEPRECATED_CF_MODEL) {
-        oldSettings.cloudflare_llm_model = '@cf/meta/llama-3.1-8b-instruct-fp8-fast';
-    }
 
     assert.equal(oldSettings.groq_llm_model, 'openai/gpt-oss-20b');
-    assert.equal(oldSettings.cloudflare_llm_model, '@cf/meta/llama-3.1-8b-instruct-fp8-fast');
     assert.equal(oldSettings.groq_stt_model, 'whisper-large-v3-turbo');
     assert.equal(oldSettings.custom_model, 'my-custom-model');
 });

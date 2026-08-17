@@ -147,7 +147,6 @@ pub fn run() {
             commands::providers::groq_transcribe_only,
             commands::providers::cloudflare_transcribe_only,
             commands::providers::groq_translate_text,
-            commands::providers::cloudflare_translate_text,
             commands::providers::assemblyai_streaming_token,
             commands::providers::assemblyai_ping,
             commands::providers::groq_ping,

@@ -306,7 +306,6 @@ export const appSettingsMethods = {
         if (cfToken) cfToken.value = s.cloudflare_api_token || '';
         this._setSelectValue('select-groq-stt-model', s.groq_stt_model || 'whisper-large-v3-turbo');
         this._setSelectValue('select-cloudflare-stt-model', s.cloudflare_stt_model || '@cf/openai/whisper-large-v3-turbo');
-        this._setSelectValue('select-cloudflare-llm-model', s.cloudflare_llm_model || '@cf/meta/llama-3.1-8b-instruct-fp8-fast');
         this._setSelectValue('select-llm-provider', migrateLlmProvider(s.llm_provider));
         const llmFallback = document.getElementById('check-llm-fallback');
         if (llmFallback) llmFallback.checked = s.llm_fallback !== false;
@@ -513,7 +512,6 @@ export const appSettingsMethods = {
             cloudflare_account_id: document.getElementById('input-cloudflare-account-id')?.value.trim() || '',
             cloudflare_api_token: document.getElementById('input-cloudflare-token')?.value.trim() || '',
             cloudflare_stt_model: document.getElementById('select-cloudflare-stt-model')?.value || '@cf/openai/whisper-large-v3-turbo',
-            cloudflare_llm_model: document.getElementById('select-cloudflare-llm-model')?.value || '@cf/meta/llama-3.1-8b-instruct-fp8-fast',
             llm_provider: migrateLlmProvider(document.getElementById('select-llm-provider')?.value),
             llm_fallback: document.getElementById('check-llm-fallback')?.checked !== false,
             azure_translator_enabled: document.getElementById('check-azure-enabled')?.checked || false,
@@ -838,8 +836,6 @@ export const appSettingsMethods = {
         if (labelFallback) labelFallback.style.display = (!isLocal && !isAutomatic) ? '' : 'none';
         if (hintFallback) hintFallback.style.display = (!isLocal && !isAutomatic) ? '' : 'none';
         if (hintAuto) hintAuto.style.display = (!isLocal && isAutomatic) ? '' : 'none';
-        const cfLlm = document.getElementById('select-cloudflare-llm-model');
-        if (cfLlm) cfLlm.style.display = '';
         this._updateChainUI();
     },
 

@@ -17,7 +17,6 @@ const GROQ_STT_MODEL: &str = "whisper-large-v3-turbo";
 const GROQ_CHAT_MODEL: &str = "openai/gpt-oss-120b";
 
 const CF_WHISPER_MODEL: &str = "@cf/openai/whisper-large-v3-turbo";
-const CF_LLM_MODEL: &str = "@cf/meta/llama-3.1-8b-instruct-fp8-fast";
 const CF_TOKEN_VERIFY_URL: &str = "https://api.cloudflare.com/client/v4/user/tokens/verify";
 const GEMINI_DEFAULT_MODEL: &str = "gemini-3.1-flash-lite";
 const GEMINI_MODELS_BASE: &str = "https://generativelanguage.googleapis.com/v1beta/models";
@@ -240,39 +239,6 @@ fn http_error_status(status: reqwest::StatusCode, body: &str) -> String {
     }
 }
 
-fn resolve_cloudflare_llm(provided: Option<&str>) -> String {
-    let model = resolve_model(provided, CF_LLM_MODEL);
-    match model.as_str() {
-        "@cf/qwen/qwen3-30b-a3b-fp8" | "@cf/meta/llama-3.1-8b-instruct-fp8-fast" => model,
-        _ => CF_LLM_MODEL.to_string(),
-    }
-}
-
-fn cloudflare_translate_payload(
-    source_language: &str,
-    target_language: &str,
-    text: &str,
-) -> serde_json::Value {
-    serde_json::json!({
-        "messages": [
-            {"role": "system", "content": translation_system_prompt(target_language)},
-            {"role": "user", "content": translation_prompt(source_language, target_language, text)}
-        ]
-    })
-}
-
-fn cloudflare_translated_text(parsed: &serde_json::Value) -> String {
-    parsed
-        .pointer("/result/translated_text")
-        .or_else(|| parsed.pointer("/result/response"))
-        .or_else(|| parsed.pointer("/result/output"))
-        .or_else(|| parsed.get("translated_text"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .trim()
-        .to_string()
-}
-
 const GROQ_LLM_ALLOWED: &[&str] = &[
     "openai/gpt-oss-120b",
     "openai/gpt-oss-20b",
@@ -473,38 +439,6 @@ async fn cloudflare_transcribe(
         .trim()
         .to_string();
     Ok(text)
-}
-
-async fn cloudflare_translate(
-    account_id: &str,
-    api_token: &str,
-    source_language: &str,
-    target_language: &str,
-    text: &str,
-    llm_model: &str,
-) -> Result<String, String> {
-    if text.is_empty() {
-        return Ok(String::new());
-    }
-    if source_language == target_language {
-        return Ok(text.to_string());
-    }
-    let payload = cloudflare_translate_payload(source_language, target_language, text);
-    let resp = http()
-        .post(cf_run_url(account_id, llm_model))
-        .bearer_auth(api_token)
-        .json(&payload)
-        .send()
-        .await
-        .map_err(|e| format!("Cloudflare LLM request failed: {e}"))?;
-    let status = resp.status();
-    let body = resp.text().await.map_err(|e| e.to_string())?;
-    if !status.is_success() {
-        return Err(http_error_status(status, &body));
-    }
-    let parsed: serde_json::Value =
-        serde_json::from_str(&body).map_err(|e| format!("Cloudflare LLM JSON: {e}"))?;
-    Ok(cloudflare_translated_text(&parsed))
 }
 
 // Azure Translator — maps application language codes to Azure-supported codes
@@ -929,7 +863,6 @@ pub async fn cloudflare_transcribe_and_translate(
     account_id: String,
     api_token: String,
     stt_model: Option<String>,
-    llm_model: Option<String>,
 ) -> Result<ProviderResult, String> {
     if account_id.trim().is_empty() || api_token.trim().is_empty() {
         return Err("Cloudflare account ID and API token are required".into());
@@ -938,22 +871,13 @@ pub async fn cloudflare_transcribe_and_translate(
         return Err("Empty audio".into());
     }
     let stt = resolve_model(stt_model.as_deref(), CF_WHISPER_MODEL);
-    let llm = resolve_cloudflare_llm(llm_model.as_deref());
     let wav = pcm_to_wav(&pcm);
     let source_text =
         cloudflare_transcribe(&account_id, &api_token, &wav, &source_language, &stt).await?;
-    let translated_text = cloudflare_translate(
-        &account_id,
-        &api_token,
-        &source_language,
-        &target_language,
-        &source_text,
-        &llm,
-    )
-    .await?;
+    let _ = target_language;
     Ok(ProviderResult {
         source_text,
-        translated_text,
+        translated_text: String::new(),
     })
 }
 
@@ -1039,41 +963,6 @@ pub async fn groq_translate_text(
     let translated_text = groq_translate(&api_key, &source_language, &target_language, &text, &llm)
         .await
         .map_err(|e| wrap_provider_error("groq", "translation", e))?;
-    Ok(ProviderResult {
-        source_text: text,
-        translated_text,
-    })
-}
-
-#[tauri::command]
-pub async fn cloudflare_translate_text(
-    account_id: String,
-    api_token: String,
-    source_language: String,
-    target_language: String,
-    text: String,
-    llm_model: Option<String>,
-) -> Result<ProviderResult, String> {
-    if account_id.trim().is_empty() || api_token.trim().is_empty() {
-        return Err(provider_error_json(
-            "cloudflare",
-            "translation",
-            reqwest::StatusCode::UNAUTHORIZED,
-            "Cloudflare account ID and API token are required",
-            None,
-        ));
-    }
-    let llm = resolve_cloudflare_llm(llm_model.as_deref());
-    let translated_text = cloudflare_translate(
-        &account_id,
-        &api_token,
-        &source_language,
-        &target_language,
-        &text,
-        &llm,
-    )
-    .await
-    .map_err(|e| wrap_provider_error("cloudflare", "translation", e))?;
     Ok(ProviderResult {
         source_text: text,
         translated_text,
@@ -1581,41 +1470,6 @@ mod tests {
             "choices": [{ "message": { "content": "", "reasoning_content": "salut" } }]
         });
         assert_eq!(groq_message_text(&reasoned), "salut");
-    }
-
-    #[test]
-    fn resolve_cloudflare_llm_keeps_allowed_chat_ids() {
-        assert_eq!(
-            resolve_cloudflare_llm(Some("@cf/meta/llama-3.1-8b-instruct-fp8-fast")),
-            "@cf/meta/llama-3.1-8b-instruct-fp8-fast"
-        );
-        assert_eq!(
-            resolve_cloudflare_llm(Some("@cf/qwen/qwen3-30b-a3b-fp8")),
-            "@cf/qwen/qwen3-30b-a3b-fp8"
-        );
-        assert_eq!(
-            resolve_cloudflare_llm(Some("@cf/meta/m2m100-1.2b")),
-            "@cf/meta/llama-3.1-8b-instruct-fp8-fast"
-        );
-        assert_eq!(
-            resolve_cloudflare_llm(Some("@cf/meta/llama-3.1-8b-instruct-fast")),
-            "@cf/meta/llama-3.1-8b-instruct-fp8-fast"
-        );
-    }
-
-    #[test]
-    fn cloudflare_translate_payload_is_chat_messages() {
-        let chat = cloudflare_translate_payload("en", "ro", "hello");
-        assert!(chat.get("messages").is_some());
-        assert!(chat.get("text").is_none());
-    }
-
-    #[test]
-    fn cloudflare_translated_text_reads_m2m_and_chat_shapes() {
-        let m2m = serde_json::json!({ "result": { "translated_text": "salut" } });
-        assert_eq!(cloudflare_translated_text(&m2m), "salut");
-        let chat = serde_json::json!({ "result": { "response": "salut" } });
-        assert_eq!(cloudflare_translated_text(&chat), "salut");
     }
 
     #[test]

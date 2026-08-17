@@ -396,17 +396,16 @@
         <div class="settings-section" id="section-llm-provider">
           <span class="field-label">LLM</span>
           <select id="select-llm-provider">
-            <option value="automatic">Automatic — Azure Translator → Gemini Flash-Lite → Cloudflare LLM → Ollama</option>
+            <option value="automatic">Automatic — Azure Translator → Gemini Flash-Lite → Ollama</option>
             <option value="azure">Azure Translator</option>
             <option value="gemini">Gemini Flash-Lite</option>
-            <option value="cloudflare-llm">Cloudflare LLM</option>
             <option value="ollama">Ollama</option>
           </select>
           <label class="checkbox-label" id="label-llm-fallback" style="margin-top:8px; display:none">
             <input type="checkbox" id="check-llm-fallback" checked /> Fallback if this provider fails
           </label>
-          <p class="hint" id="hint-llm-fallback" style="display:none">Uses the selected LLM first, then Azure → Gemini → Cloudflare → Ollama (skipping the one you picked).</p>
-          <p class="hint" id="hint-llm-automatic">Engine above is STT. Translation uses Azure → Gemini → Cloudflare → Ollama independently. Groq is STT-only.</p>
+          <p class="hint" id="hint-llm-fallback" style="display:none">Uses the selected LLM first, then Azure → Gemini → Ollama (skipping the one you picked).</p>
+          <p class="hint" id="hint-llm-automatic">Engine above is STT. Translation uses Azure → Gemini → Ollama independently. Groq and Cloudflare are STT-only.</p>
         </div>
 
         <div class="settings-section" id="section-assemblyai-key">
@@ -520,14 +519,10 @@
             <button id="btn-test-cloudflare" class="btn-secondary small" title="Test connection">Test</button>
           </div>
           <p class="hint">Get token at <a href="#" id="link-cloudflare-tokens">dash.cloudflare.com/profile/api-tokens</a> · needs Workers AI access</p>
-          <span class="field-label" style="margin-top:10px">Cloudflare models</span>
+          <span class="field-label" style="margin-top:10px">Cloudflare STT model</span>
           <select id="select-cloudflare-stt-model">
             <option value="@cf/openai/whisper-large-v3-turbo">STT · whisper-large-v3-turbo</option>
             <option value="@cf/openai/whisper">STT · whisper</option>
-          </select>
-          <select id="select-cloudflare-llm-model" style="margin-top:6px">
-            <option value="@cf/meta/llama-3.1-8b-instruct-fp8-fast">LLM · llama-3.1-8b-instruct-fp8-fast (Default)</option>
-            <option value="@cf/qwen/qwen3-30b-a3b-fp8">LLM · qwen3-30b-a3b-fp8</option>
           </select>
         </div>
 
@@ -607,7 +602,7 @@
           <span class="field-label">Provider Fallback Chains</span>
           <div class="chain-box" style="background: rgba(255,255,255,0.03); padding: 8px 12px; border-radius: 6px; font-size: 12px; margin-top: 6px;">
             <div><strong>STT Chain:</strong> <span id="chain-stt-display">AssemblyAI → Groq → Cloudflare → Local STT</span></div>
-            <div style="margin-top: 4px;"><strong>Translation Chain:</strong> <span id="chain-translation-display">Azure Translator → Gemini Flash-Lite → Cloudflare LLM → Ollama</span></div>
+            <div style="margin-top: 4px;"><strong>Translation Chain:</strong> <span id="chain-translation-display">Azure Translator → Gemini Flash-Lite → Ollama</span></div>
             <div style="margin-top: 4px;"><strong>Runtime STT:</strong> <span id="chain-runtime-stt">—</span></div>
           </div>
           <div style="margin-top: 8px; display: flex; align-items: center; justify-content: space-between;">

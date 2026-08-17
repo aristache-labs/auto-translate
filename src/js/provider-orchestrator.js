@@ -14,7 +14,7 @@ export const ERROR_TYPES = {
 
 export const ERROR_KINDS = ERROR_TYPES;
 
-export const TRANSLATION_CHAIN_DEFAULT = ['azure', 'gemini', 'cloudflare-llm', 'ollama'];
+export const TRANSLATION_CHAIN_DEFAULT = ['azure', 'gemini', 'ollama'];
 
 export const PROVIDER_CHAINS = {
   stt: STT_CHAIN_DEFAULT,
@@ -26,7 +26,8 @@ const LLM_PROVIDER_ALIASES = {
   automatic: 'automatic',
   openrouter: 'automatic',
   engine: 'automatic',
-  cloudflare: 'cloudflare-llm',
+  cloudflare: 'automatic',
+  'cloudflare-llm': 'automatic',
   groq: 'automatic',
   'groq-llm': 'automatic',
 };
@@ -308,10 +309,6 @@ function isSttConfigured(settings, id, platform) {
 
 function isTranslationConfigured(settings, id) {
   switch (id) {
-    case 'cloudflare-llm':
-      return settings.cloudflare_enabled !== false
-        && hasText(settings.cloudflare_account_id)
-        && hasText(settings.cloudflare_api_token);
     case 'azure':
       return !!settings.azure_translator_enabled && hasText(settings.azure_translator_key);
     case 'gemini':
@@ -343,8 +340,6 @@ export function translationModelFor(settings = {}, provider) {
   switch (provider) {
     case 'groq-llm':
       return settings.groq_llm_model || 'openai/gpt-oss-120b';
-    case 'cloudflare-llm':
-      return settings.cloudflare_llm_model || '@cf/meta/llama-3.1-8b-instruct-fp8-fast';
     case 'azure':
       return 'microsoft-translator';
     case 'gemini':
@@ -501,15 +496,6 @@ async function invokeTranslation(invoke, provider, settings, text, sourceLanguag
         targetLanguage,
         text,
         llmModel: settings.groq_llm_model || '',
-      });
-    case 'cloudflare-llm':
-      return invoke('cloudflare_translate_text', {
-        accountId: settings.cloudflare_account_id,
-        apiToken: settings.cloudflare_api_token,
-        sourceLanguage,
-        targetLanguage,
-        text,
-        llmModel: settings.cloudflare_llm_model || '',
       });
     case 'azure':
       return invoke('azure_translate_text', {

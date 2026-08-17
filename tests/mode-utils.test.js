@@ -85,13 +85,10 @@ test('client config uses sourceLanguage/targetLanguage', () => {
     assert.equal(cfg.targetLanguage, 'en');
     assert.equal(cfg.apiKey, 'k');
     assert.equal(cfg.sttModel, 'whisper-large-v3-turbo');
-    assert.equal(cfg.llmModel, 'openai/gpt-oss-120b');
     const cf = clientConfigFromSettings({
         cloudflare_stt_model: '@cf/openai/whisper',
-        cloudflare_llm_model: '@cf/meta/llama-3-8b-instruct',
     }, 'cloudflare');
     assert.equal(cf.sttModel, '@cf/openai/whisper');
-    assert.equal(cf.llmModel, '@cf/meta/llama-3-8b-instruct');
     const auto = clientConfigFromSettings({
         llm_provider: 'automatic',
     }, 'groq');

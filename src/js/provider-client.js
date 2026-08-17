@@ -39,7 +39,7 @@ export function normalizeClientConfig(config = {}) {
         sourceLanguage: config.sourceLanguage || config.sourceLang || 'auto',
         targetLanguage: config.targetLanguage || config.targetLang || 'vi',
         sttModel: config.sttModel || config.groqSttModel || config.cloudflareSttModel || '',
-        llmModel: config.llmModel || config.groqLlmModel || config.cloudflareLlmModel || '',
+        llmModel: config.llmModel || config.groqLlmModel || '',
         llmProvider: config.llmProvider || 'automatic',
     };
 }

@@ -17,7 +17,6 @@ const DEFAULT_SETTINGS = {
   cloudflare_account_id: '',
   cloudflare_api_token: '',
   cloudflare_stt_model: '@cf/openai/whisper-large-v3-turbo',
-  cloudflare_llm_model: '@cf/meta/llama-3.1-8b-instruct-fp8-fast',
   cloudflare_enabled: true,
   assemblyai_enabled: true,
   assemblyai_api_key: '',
@@ -94,7 +93,7 @@ async load() {
     const settings = await invoke('get_settings');
     this.settings = { ...DEFAULT_SETTINGS, ...settings };
     this.settings.translation_mode = migrateTranslationMode(this.settings.translation_mode);
-    if (this.settings.llm_provider === 'openrouter' || this.settings.llm_provider === 'engine' || this.settings.llm_provider === 'groq-llm' || this.settings.llm_provider === 'groq') {
+    if (this.settings.llm_provider === 'openrouter' || this.settings.llm_provider === 'engine' || this.settings.llm_provider === 'groq-llm' || this.settings.llm_provider === 'groq' || this.settings.llm_provider === 'cloudflare-llm' || this.settings.llm_provider === 'cloudflare') {
       this.settings.llm_provider = 'automatic';
     }
 
@@ -118,10 +117,6 @@ _migrateModelDefaults(settings) {
     'openai/gpt-oss-20b',
     'qwen/qwen3.6-27b',
   ];
-  const ALLOWED_CF_LLM = [
-    '@cf/meta/llama-3.1-8b-instruct-fp8-fast',
-    '@cf/qwen/qwen3-30b-a3b-fp8',
-  ];
   const ALLOWED_GEMINI = [
     'gemini-3.5-flash-lite',
     'gemini-3.1-flash-lite',
@@ -129,9 +124,6 @@ _migrateModelDefaults(settings) {
 
   if (!ALLOWED_GROQ_LLM.includes(settings.groq_llm_model)) {
     settings.groq_llm_model = DEFAULT_SETTINGS.groq_llm_model;
-  }
-  if (!ALLOWED_CF_LLM.includes(settings.cloudflare_llm_model)) {
-    settings.cloudflare_llm_model = DEFAULT_SETTINGS.cloudflare_llm_model;
   }
   if (!ALLOWED_GEMINI.includes(settings.gemini_model)) {
     settings.gemini_model = DEFAULT_SETTINGS.gemini_model;
