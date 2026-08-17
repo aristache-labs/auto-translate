@@ -8,6 +8,7 @@ import { sessionStore } from './session-store.js';
 import { groqClient } from './groq-client.js';
 import { cloudflareClient } from './cloudflare-client.js';
 import { assemblyaiClient } from './assemblyai-client.js';
+import { speechmaticsClient } from './speechmatics-client.js';
 import {
     sanitizeErrorMessage,
     nextSttProvider,
@@ -25,6 +26,8 @@ import {
     noteHalfOpenProbe,
     noteProviderSuccess,
     isCircuitBreakerHalfOpen,
+    usesSpeechmaticsTranslation,
+    migrateLlmProvider,
     LIVE_TRANSLATION_TIMEOUT_MS,
     LIVE_TRANSLATION_MIN_INTERVAL_MS,
     LIVE_TRANSLATION_MIN_NEW_WORDS,
@@ -67,6 +70,24 @@ export const appLiveMethods = {
             console.debug(`[timing] stt.final provider=${client.providerId} chars=${(text || '').length}`);
             this._commitSourceTurn(text, speaker, language);
         };
+        client.onTranslationPartial = (text) => {
+            if (client !== this.activeSttClient) return;
+            if (!this._usesInSessionTranslation()) return;
+            if (text) this.transcriptUI.setTranslationProvisional(text);
+        };
+        client.onTranslation = (text) => {
+            if (client !== this.activeSttClient) return;
+            if (!this._usesInSessionTranslation()) return;
+            const translated = (text || '').trim();
+            if (!translated) return;
+            this.transcriptUI.clearTranslationProvisional?.();
+            this.transcriptUI.addTranslation(translated);
+            this._speakIfEnabled(translated);
+            const original = this._lastCommittedOriginal || '';
+            this._disarmSpeechmaticsTextFallback();
+            this._smTranslatedOriginal = original;
+            if (original) sessionStore.addSegment(original, translated);
+        };
         client.onError = (error) => {
             const parsed = parseProviderError(error, {
                 provider: client.providerId,
@@ -89,7 +110,7 @@ export const appLiveMethods = {
 
 
     async _disconnectAllStt() {
-        for (const client of [this.assemblyaiClient, this.groqClient, this.cloudflareClient]) {
+        for (const client of [this.assemblyaiClient, this.speechmaticsClient, this.groqClient, this.cloudflareClient]) {
             try { if (client) await client.disconnect(); } catch { /* ignore */ }
         }
         try { await invoke('stop_local_pipeline'); } catch { /* ignore */ }
@@ -133,6 +154,7 @@ export const appLiveMethods = {
 
     _clientForProvider(provider) {
         if (provider === 'assemblyai') return this.assemblyaiClient;
+        if (provider === 'speechmatics') return this.speechmaticsClient;
         if (provider === 'groq') return this.groqClient;
         if (provider === 'cloudflare') return this.cloudflareClient;
         return null;
@@ -181,6 +203,14 @@ export const appLiveMethods = {
                         maxTurnSilenceMs: settings.assemblyai_max_turn_silence_ms ?? 1280,
                         vadThreshold: settings.assemblyai_vad_threshold ?? 0.4,
                         endOfTurnConfidence: settings.assemblyai_end_of_turn_confidence ?? 0.4,
+                    });
+                } else if (provider === 'speechmatics') {
+                    await client.connect({
+                        ...config,
+                        model: sttModel || 'enhanced',
+                        enableTranslation: migrateLlmProvider(settings.llm_provider) === 'speechmatics',
+                        sourceLanguage: this.sessionSourceLang || settings.source_language || 'auto',
+                        targetLanguage: this.sessionTargetLang || settings.target_language || 'vi',
                     });
                 } else {
                     client.connect(config);
@@ -327,7 +357,40 @@ export const appLiveMethods = {
     },
 
 
+    _usesInSessionTranslation() {
+        return usesSpeechmaticsTranslation(settingsManager.get(), this.activeSttProvider);
+    },
+
+
+    _disarmSpeechmaticsTextFallback() {
+        this._smTxFallbackGen = (this._smTxFallbackGen || 0) + 1;
+        if (this._smTxFallbackTimer) {
+            clearTimeout(this._smTxFallbackTimer);
+            this._smTxFallbackTimer = null;
+        }
+    },
+
+
+    _armSpeechmaticsTextFallback(text, language) {
+        this._disarmSpeechmaticsTextFallback();
+        const settings = settingsManager.get();
+        if (settings.llm_fallback === false) return;
+        const original = text;
+        const lang = language;
+        const token = ++this._smTxFallbackGen;
+        this._smTxFallbackTimer = setTimeout(() => {
+            if (token !== this._smTxFallbackGen || !this.isRunning) return;
+            if (!this._usesInSessionTranslation()) return;
+            if (this._smTranslatedOriginal === original) return;
+            const segmentId = allocateSegmentId();
+            this._translationJobs.set(segmentId, { text: original });
+            this._enqueueTranslation(segmentId, original, lang);
+        }, 4000);
+    },
+
+
     _onLiveSourcePartial(text, language) {
+        if (this._usesInSessionTranslation()) return;
         const chunk = (text || '').trim();
         if (!chunk || !this.isRunning) {
             console.log(`[live-tx] INVALIDATE: isRunning=${this.isRunning} chunk="${chunk.slice(0, 40)}"`);
@@ -452,6 +515,12 @@ export const appLiveMethods = {
         this._invalidateLiveTranslation();
         this.transcriptUI.clearProvisional();
         this.transcriptUI.addOriginal(chunk, speaker, language);
+        this._lastCommittedOriginal = chunk;
+        if (this._usesInSessionTranslation()) {
+            this._armSpeechmaticsTextFallback(chunk, language);
+            this._maybeRecoverStt();
+            return;
+        }
         const segmentId = allocateSegmentId();
         this._translationJobs.set(segmentId, { text: chunk });
         console.log(`[live-tx] enqueue final segment=${segmentId} chars=${chunk.length}`);

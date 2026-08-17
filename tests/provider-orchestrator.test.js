@@ -33,6 +33,8 @@ import {
 const FULL_SETTINGS = {
   assemblyai_enabled: true,
   assemblyai_api_key: 'aai_key',
+  speechmatics_enabled: true,
+  speechmatics_api_key: 'sm_key',
   groq_enabled: true,
   groq_api_key: 'gsk_123',
   groq_llm_model: 'openai/gpt-oss-120b',
@@ -117,9 +119,9 @@ test('formatErrorNotification provides clear user messages', () => {
   assert.ok(retryMsg.includes('Retrying'));
 });
 
-test('effective STT chain is AssemblyAI → Groq → Cloudflare → Local', () => {
+test('effective STT chain is AssemblyAI → Speechmatics → Groq → Cloudflare → Local', () => {
   const chain = getEffectiveSTTChain(FULL_SETTINGS, { isAppleSilicon: true, os: 'macos' });
-  assert.deepEqual(chain, ['assemblyai', 'groq', 'cloudflare', 'local-stt']);
+  assert.deepEqual(chain, ['assemblyai', 'speechmatics', 'groq', 'cloudflare', 'local-stt']);
 });
 
 test('missing, disabled, blocked, or unsupported STT providers are filtered', () => {
@@ -134,7 +136,7 @@ test('missing, disabled, blocked, or unsupported STT providers are filtered', ()
     ...FULL_SETTINGS,
     assemblyai_enabled: false,
   }, { isAppleSilicon: true });
-  assert.deepEqual(blocked, ['groq', 'cloudflare', 'local-stt']);
+  assert.deepEqual(blocked, ['speechmatics', 'groq', 'cloudflare', 'local-stt']);
 
   openCircuitBreaker(breakerKey('stt', 'groq'), Date.now() + 60_000);
   const afterBreak = getEffectiveSTTChain(FULL_SETTINGS, { isAppleSilicon: true });
@@ -144,7 +146,7 @@ test('missing, disabled, blocked, or unsupported STT providers are filtered', ()
 
 test('unsupported Local STT is skipped on Windows', () => {
   const chain = getEffectiveSTTChain(FULL_SETTINGS, { os: 'windows', isAppleSilicon: false });
-  assert.deepEqual(chain, ['assemblyai', 'groq', 'cloudflare']);
+  assert.deepEqual(chain, ['assemblyai', 'speechmatics', 'groq', 'cloudflare']);
 });
 
 test('effective translation order is Azure → Gemini → Ollama', () => {
@@ -188,6 +190,47 @@ test('manual Groq primary starts at Groq then continues down the chain', () => {
   }, { isAppleSilicon: true });
   assert.deepEqual(order, ['groq', 'cloudflare', 'local-stt']);
   assert.equal(nextSttProvider({ ...FULL_SETTINGS, translation_mode: 'groq' }, { isAppleSilicon: true }, 'groq'), 'cloudflare');
+});
+
+test('Speechmatics LLM uses in-session translation and optional text fallback', () => {
+  assert.deepEqual(getEffectiveTranslationChain({
+    ...FULL_SETTINGS,
+    llm_provider: 'speechmatics',
+    llm_fallback: false,
+  }, 'speechmatics'), []);
+  assert.deepEqual(getEffectiveTranslationChain({
+    ...FULL_SETTINGS,
+    llm_provider: 'speechmatics',
+    llm_fallback: true,
+  }, 'speechmatics'), ['azure', 'gemini', 'ollama']);
+  assert.deepEqual(getEffectiveTranslationChain({
+    ...FULL_SETTINGS,
+    llm_provider: 'speechmatics',
+    llm_fallback: false,
+  }, 'groq'), []);
+  assert.deepEqual(getEffectiveTranslationChain({
+    ...FULL_SETTINGS,
+    llm_provider: 'speechmatics',
+    llm_fallback: true,
+  }, 'groq'), ['azure', 'gemini', 'ollama']);
+  const order = getSttStartOrder({
+    ...FULL_SETTINGS,
+    translation_mode: 'speechmatics',
+  }, { isAppleSilicon: true });
+  assert.deepEqual(order, ['speechmatics', 'groq', 'cloudflare', 'local-stt']);
+  assert.deepEqual(getSttStartOrder({
+    ...FULL_SETTINGS,
+    translation_mode: 'automatic',
+    llm_provider: 'speechmatics',
+  }, { isAppleSilicon: true }), ['speechmatics', 'assemblyai', 'groq', 'cloudflare', 'local-stt']);
+  assert.equal(
+    preferredRecoveryStt({ ...FULL_SETTINGS, translation_mode: 'speechmatics' }, { isAppleSilicon: true }, 'speechmatics'),
+    null,
+  );
+  assert.equal(
+    preferredRecoveryStt({ ...FULL_SETTINGS, translation_mode: 'speechmatics' }, { isAppleSilicon: true }, 'groq'),
+    'speechmatics',
+  );
 });
 
 test('translation failures rotate through the configured order and ignore stale jobs', async () => {

@@ -23,12 +23,15 @@ test('legacy modes migrate to groq without inventing credentials', () => {
     assert.equal(migrateTranslationMode('groq'), 'groq');
     assert.equal(migrateTranslationMode('automatic'), 'automatic');
     assert.equal(migrateTranslationMode('assemblyai'), 'assemblyai');
+    assert.equal(migrateTranslationMode('speechmatics'), 'speechmatics');
 });
 
 test('engine class maps 1:1 with groq|cloudflare|local', () => {
     assert.equal(engineClassFromMode('groq'), 'groq');
     assert.equal(engineClassFromMode('cloudflare'), 'cloudflare');
     assert.equal(engineClassFromMode('local'), 'local');
+    assert.equal(engineClassFromMode('assemblyai'), 'assemblyai');
+    assert.equal(engineClassFromMode('speechmatics'), 'speechmatics');
     assert.equal(engineClassFromMode('soniox'), 'groq');
     assert.equal(nextModeForEngineClass('cloudflare', 'groq'), 'cloudflare');
     assert.equal(nextModeForEngineClass('standard', 'local'), 'local');

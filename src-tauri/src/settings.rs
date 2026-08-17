@@ -47,7 +47,7 @@ pub struct Settings {
     /// Cloudflare Whisper model
     #[serde(default = "default_cloudflare_stt_model")]
     pub cloudflare_stt_model: String,
-    /// LLM source: "automatic" | "azure" | "gemini" | "ollama"
+    /// LLM source: "automatic" | "azure" | "gemini" | "ollama" | "speechmatics"
     #[serde(default = "default_llm_provider")]
     pub llm_provider: String,
     /// When a specific LLM is selected, continue down the automatic chain on failure.
@@ -84,6 +84,13 @@ pub struct Settings {
     pub assemblyai_vad_threshold: f32,
     #[serde(default = "default_assemblyai_end_of_turn_confidence")]
     pub assemblyai_end_of_turn_confidence: f32,
+    /// Speechmatics Realtime STT (+ optional in-session translation).
+    #[serde(default = "default_true")]
+    pub speechmatics_enabled: bool,
+    #[serde(default)]
+    pub speechmatics_api_key: String,
+    #[serde(default = "default_speechmatics_model")]
+    pub speechmatics_model: String,
     /// Whether Azure AI Translator Text is available in the translation chain.
     #[serde(default)]
     pub azure_translator_enabled: bool,
@@ -127,7 +134,7 @@ pub struct Settings {
     pub max_lines: u32,
     /// Whether to show original text alongside translation
     pub show_original: bool,
-    /// STT engine / automatic chain: "automatic" | "assemblyai" | "groq" | "cloudflare" | "local"
+    /// STT engine / automatic chain: "automatic" | "assemblyai" | "speechmatics" | "groq" | "cloudflare" | "local"
     pub translation_mode: String,
     /// Optional custom context for better transcription
     pub custom_context: Option<CustomContext>,
@@ -216,6 +223,9 @@ impl Default for Settings {
             assemblyai_max_turn_silence_ms: default_assemblyai_max_turn_silence_ms(),
             assemblyai_vad_threshold: default_assemblyai_vad_threshold(),
             assemblyai_end_of_turn_confidence: default_assemblyai_end_of_turn_confidence(),
+            speechmatics_enabled: true,
+            speechmatics_api_key: String::new(),
+            speechmatics_model: default_speechmatics_model(),
             azure_translator_enabled: false,
             azure_translator_key: String::new(),
             azure_translator_region: String::new(),
@@ -300,6 +310,10 @@ fn default_assemblyai_streaming_model() -> String {
     "universal-streaming-english".to_string()
 }
 
+fn default_speechmatics_model() -> String {
+    "enhanced".to_string()
+}
+
 fn default_assemblyai_min_turn_silence_ms() -> u32 {
     400
 }
@@ -337,7 +351,7 @@ fn settings_path() -> PathBuf {
 /// Credentials are never copied across providers.
 pub fn normalize_translation_mode(mode: &str) -> String {
     match mode {
-        "automatic" | "assemblyai" | "groq" | "cloudflare" | "local" => mode.to_string(),
+        "automatic" | "assemblyai" | "speechmatics" | "groq" | "cloudflare" | "local" => mode.to_string(),
         "soniox" | "openai" | "qwen" | "standard" => "groq".to_string(),
         _ => "groq".to_string(),
     }
@@ -396,7 +410,10 @@ mod tests {
         assert!(s.groq_enabled);
         assert!(s.cloudflare_enabled);
         assert!(s.assemblyai_enabled);
+        assert!(s.speechmatics_enabled);
         assert!(s.assemblyai_api_key.is_empty());
+        assert!(s.speechmatics_api_key.is_empty());
+        assert_eq!(s.speechmatics_model, "enhanced");
         assert_eq!(s.assemblyai_region, "global");
         assert_eq!(s.assemblyai_streaming_model, "universal-streaming-english");
         assert!(!s.gemini_enabled);
@@ -453,6 +470,7 @@ mod tests {
         assert_eq!(normalize_translation_mode("local"), "local");
         assert_eq!(normalize_translation_mode("automatic"), "automatic");
         assert_eq!(normalize_translation_mode("assemblyai"), "assemblyai");
+        assert_eq!(normalize_translation_mode("speechmatics"), "speechmatics");
     }
 
     #[test]
@@ -480,6 +498,8 @@ mod tests {
         s.assemblyai_region = "us".into();
         s.assemblyai_streaming_model = "whisper-rt".into();
         s.assemblyai_speaker_labels = true;
+        s.speechmatics_api_key = "sm_test".into();
+        s.speechmatics_model = "enhanced".into();
         s.gemini_enabled = true;
         s.gemini_api_key = "gem_test".into();
         s.gemini_model = "gemini-3.1-flash-lite".into();
@@ -494,6 +514,8 @@ mod tests {
         assert_eq!(back.assemblyai_region, "us");
         assert_eq!(back.assemblyai_streaming_model, "whisper-rt");
         assert!(back.assemblyai_speaker_labels);
+        assert_eq!(back.speechmatics_api_key, "sm_test");
+        assert_eq!(back.speechmatics_model, "enhanced");
         assert!(back.gemini_enabled);
         assert_eq!(back.gemini_api_key, "gem_test");
         assert!(back.ollama_enabled);

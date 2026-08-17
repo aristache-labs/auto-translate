@@ -75,6 +75,10 @@
             <span class="engine-pill-icon">◆</span>
             <span class="engine-pill-label">AssemblyAI</span>
           </button>
+          <button class="engine-pill-btn" data-engine-class="speechmatics" type="button">
+            <span class="engine-pill-icon">◎</span>
+            <span class="engine-pill-label">Speechmatics</span>
+          </button>
           <button class="engine-pill-btn active" data-engine-class="groq" type="button">
             <span class="engine-pill-icon">⚡</span>
             <span class="engine-pill-label">Groq</span>
@@ -197,7 +201,7 @@
           <button class="engine-card" data-engine-class="automatic" type="button">
             <div class="engine-card-icon">🤖</div>
             <div class="engine-card-name">Automatic</div>
-            <div class="engine-card-meta">AssemblyAI → Groq → Cloudflare</div>
+            <div class="engine-card-meta">AssemblyAI → Speechmatics → Groq → Cloudflare</div>
             <ul class="engine-card-feats">
               <li>Best STT first</li>
               <li>Auto-fallback chain</li>
@@ -212,6 +216,16 @@
               <li>Real-time turns</li>
               <li>Speaker labels</li>
               <li>EU/US regions</li>
+            </ul>
+          </button>
+          <button class="engine-card" data-engine-class="speechmatics" type="button">
+            <div class="engine-card-icon">◎</div>
+            <div class="engine-card-name">Speechmatics</div>
+            <div class="engine-card-meta">Realtime STT · Optional in-session translation</div>
+            <ul class="engine-card-feats">
+              <li>Partials under 500ms</li>
+              <li>Finals ~0.7s</li>
+              <li>English ↔ 30+ languages</li>
             </ul>
           </button>
           <button class="engine-card" data-engine-class="groq" type="button">
@@ -380,14 +394,16 @@
         <div class="settings-section">
           <span class="field-label">Engine</span>
           <select id="select-translation-mode">
-            <option value="automatic">Automatic — AssemblyAI → Groq → Cloudflare → Local</option>
+            <option value="automatic">Automatic — AssemblyAI → Speechmatics → Groq → Cloudflare → Local</option>
             <option value="assemblyai">AssemblyAI Streaming</option>
+            <option value="speechmatics">Speechmatics Realtime</option>
             <option value="groq">⚡ Groq — Fast (Primary)</option>
             <option value="cloudflare">☁️ Cloudflare — Fallback</option>
             <option value="local">🖥️ Local MLX</option>
           </select>
           <p class="hint" id="hint-mode-automatic">Uses the first healthy STT provider in the chain. Temporary fallback does not change this setting.</p>
           <p class="hint" id="hint-mode-assemblyai" style="display:none">Streaming STT · translation uses the independent chain</p>
+          <p class="hint" id="hint-mode-speechmatics" style="display:none">Realtime STT · pick Speechmatics under LLM for in-session translation</p>
           <p class="hint" id="hint-mode-groq" style="display:none">Cloud · Whisper v3 · ~$0.02/hr · Fallback continues down the chain</p>
           <p class="hint" id="hint-mode-cloudflare" style="display:none">Cloud · Whisper v3 · Reliable backup engine</p>
           <p class="hint" id="hint-mode-local" style="display:none">Offline · free · ~3–4s delay</p>
@@ -397,6 +413,7 @@
           <span class="field-label">LLM</span>
           <select id="select-llm-provider">
             <option value="automatic">Automatic — Azure Translator → Gemini Flash-Lite → Ollama</option>
+            <option value="speechmatics">Speechmatics (in-session)</option>
             <option value="azure">Azure Translator</option>
             <option value="gemini">Gemini Flash-Lite</option>
             <option value="ollama">Ollama</option>
@@ -405,7 +422,8 @@
             <input type="checkbox" id="check-llm-fallback" checked /> Fallback if this provider fails
           </label>
           <p class="hint" id="hint-llm-fallback" style="display:none">Uses the selected LLM first, then Azure → Gemini → Ollama (skipping the one you picked).</p>
-          <p class="hint" id="hint-llm-automatic">Engine above is STT. Translation uses Azure → Gemini → Ollama independently. Groq and Cloudflare are STT-only.</p>
+          <p class="hint" id="hint-llm-automatic">Engine above is STT. Translation uses Azure → Gemini → Ollama independently. Groq and Cloudflare are STT-only. Speechmatics LLM translates on the same realtime socket.</p>
+          <p class="hint" id="hint-llm-speechmatics" style="display:none">In-session translation on the Speechmatics WebSocket (English ↔ 30+ languages). Enable fallback to continue with Azure → Gemini → Ollama if Speechmatics STT is not active or translation is late.</p>
         </div>
 
         <div class="settings-section" id="section-assemblyai-key">
@@ -471,6 +489,35 @@
             <span id="assemblyai-eot-value" class="range-value">0.4</span>
           </div>
           <p class="hint">Credential test mints a short-lived token only — it does not start capture or leave a stream open.</p>
+        </div>
+
+        <div class="settings-section" id="section-speechmatics-key">
+          <div class="field-row" style="align-items: center; justify-content: space-between;">
+            <span class="field-label">
+              Speechmatics Realtime
+              <span id="key-status-speechmatics" class="key-status"></span>
+            </span>
+            <label class="checkbox-label" style="margin: 0;">
+              <input type="checkbox" id="check-speechmatics-enabled" /> Enable
+            </label>
+          </div>
+          <div class="input-group" style="margin-top:6px">
+            <input type="password" id="input-speechmatics-key" placeholder="Speechmatics API key" autocomplete="off" />
+            <button id="btn-toggle-speechmatics-key" class="icon-btn small" title="Show/Hide">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" />
+              </svg>
+            </button>
+            <button id="btn-test-speechmatics" class="btn-secondary small" title="Test connection">Test</button>
+          </div>
+          <p class="hint">Get a key at <a href="#" id="link-speechmatics">portal.speechmatics.com</a> · JWT is minted locally, never sent as the long-lived key over the socket.</p>
+          <div class="field" style="margin-top:8px">
+            <span class="field-label">Model</span>
+            <select id="select-speechmatics-model">
+              <option value="enhanced">enhanced (recommended)</option>
+              <option value="standard">standard</option>
+            </select>
+          </div>
         </div>
 
         <div class="settings-section" id="section-groq-key">

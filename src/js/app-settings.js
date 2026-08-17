@@ -38,6 +38,10 @@ export const appSettingsMethods = {
             const input = document.getElementById('input-assemblyai-key');
             if (input) input.type = input.type === 'password' ? 'text' : 'password';
         });
+        this._on('btn-toggle-speechmatics-key', 'click', () => {
+            const input = document.getElementById('input-speechmatics-key');
+            if (input) input.type = input.type === 'password' ? 'text' : 'password';
+        });
         this._on('btn-toggle-groq-key', 'click', () => {
             const input = document.getElementById('input-groq-key');
             if (input) input.type = input.type === 'password' ? 'text' : 'password';
@@ -64,6 +68,7 @@ export const appSettingsMethods = {
         this._on('btn-test-gemini', 'click', () => this._testConnection('gemini'));
         this._on('btn-test-ollama', 'click', () => this._testConnection('ollama'));
         this._on('btn-test-assemblyai', 'click', () => this._testConnection('assemblyai'));
+        this._on('btn-test-speechmatics', 'click', () => this._testConnection('speechmatics'));
         this._on('btn-reset-circuit-breaker', 'click', () => {
             resetAllCircuitBreakers();
             this._showToast('Circuit breakers reset', 'success');
@@ -75,6 +80,7 @@ export const appSettingsMethods = {
             'input-cloudflare-token', 'input-azure-key', 'check-azure-enabled',
             'input-gemini-key', 'check-gemini-enabled', 'input-ollama-model',
             'check-ollama-enabled', 'input-assemblyai-key', 'check-assemblyai-enabled',
+            'input-speechmatics-key', 'check-speechmatics-enabled',
             'select-translation-mode', 'select-llm-provider', 'check-llm-fallback'
         ];
         refreshChainInputs.forEach(id => {
@@ -101,6 +107,11 @@ export const appSettingsMethods = {
         this._on('btn-test-groq', 'click', () => this._testConnection('groq'));
         this._on('btn-test-cloudflare', 'click', () => this._testConnection('cloudflare'));
         this._on('input-assemblyai-key', 'input', () => this._refreshKeyStatus());
+        this._on('input-speechmatics-key', 'input', () => this._refreshKeyStatus());
+        this._on('link-speechmatics', 'click', (e) => {
+            e.preventDefault();
+            window.__TAURI__.opener.openUrl('https://portal.speechmatics.com/settings/api-keys');
+        });
 
         document.getElementById('select-translation-mode').addEventListener('change', (e) => {
             this._updateModeUI(e.target.value);
@@ -368,6 +379,11 @@ export const appSettingsMethods = {
         if (eotEl) eotEl.value = eot;
         const eotVal = document.getElementById('assemblyai-eot-value');
         if (eotVal) eotVal.textContent = Number(eot).toFixed(2);
+        const smEnabled = document.getElementById('check-speechmatics-enabled');
+        if (smEnabled) smEnabled.checked = s.speechmatics_enabled !== false;
+        const smKey = document.getElementById('input-speechmatics-key');
+        if (smKey) smKey.value = s.speechmatics_api_key || '';
+        this._setSelectValue('select-speechmatics-model', s.speechmatics_model || 'enhanced');
 
         this._updateLlmProviderUI();
         this._updateChainUI();
@@ -536,6 +552,9 @@ export const appSettingsMethods = {
             assemblyai_max_turn_silence_ms: parseInt(document.getElementById('range-assemblyai-max-silence')?.value || 1280, 10),
             assemblyai_vad_threshold: parseFloat(document.getElementById('range-assemblyai-vad')?.value || 0.4),
             assemblyai_end_of_turn_confidence: parseFloat(document.getElementById('range-assemblyai-eot')?.value || 0.4),
+            speechmatics_enabled: document.getElementById('check-speechmatics-enabled')?.checked !== false,
+            speechmatics_api_key: document.getElementById('input-speechmatics-key')?.value.trim() || '',
+            speechmatics_model: document.getElementById('select-speechmatics-model')?.value || 'enhanced',
             source_language: document.getElementById('select-source-lang').value,
             target_language: document.getElementById('select-target-lang').value,
             translation_mode: migrateTranslationMode(document.getElementById('select-translation-mode').value),
@@ -730,17 +749,20 @@ export const appSettingsMethods = {
         const isCloudflare = mode === 'cloudflare';
         const isLocal = mode === 'local';
         const isAssembly = mode === 'assemblyai';
+        const isSpeechmatics = mode === 'speechmatics';
         const isAutomatic = mode === 'automatic';
         const isCloudRealtime = false;
         this._updatePillState(this.activeSttProvider || mode);
 
         const hintAuto = document.getElementById('hint-mode-automatic');
         const hintAai = document.getElementById('hint-mode-assemblyai');
+        const hintSm = document.getElementById('hint-mode-speechmatics');
         const hintGroq = document.getElementById('hint-mode-groq');
         const hintCf = document.getElementById('hint-mode-cloudflare');
         const hintLocal = document.getElementById('hint-mode-local');
         if (hintAuto) hintAuto.style.display = isAutomatic ? '' : 'none';
         if (hintAai) hintAai.style.display = isAssembly ? '' : 'none';
+        if (hintSm) hintSm.style.display = isSpeechmatics ? '' : 'none';
         if (hintGroq) hintGroq.style.display = isGroq ? '' : 'none';
         if (hintCf) hintCf.style.display = isCloudflare ? '' : 'none';
         if (hintLocal) hintLocal.style.display = isLocal ? '' : 'none';
@@ -750,8 +772,9 @@ export const appSettingsMethods = {
         const missingKey =
             (isGroq && !(s.groq_api_key || '').trim()) ? 'Groq' :
             (isCloudflare && (!(s.cloudflare_account_id || '').trim() || !(s.cloudflare_api_token || '').trim())) ? 'Cloudflare' :
-            (isAssembly && !(s.assemblyai_api_key || '').trim()) ? 'AssemblyAI' : null;
-        const activeHint = isAutomatic ? hintAuto : isAssembly ? hintAai : isGroq ? hintGroq : isCloudflare ? hintCf : hintLocal;
+            (isAssembly && !(s.assemblyai_api_key || '').trim()) ? 'AssemblyAI' :
+            (isSpeechmatics && !(s.speechmatics_api_key || '').trim()) ? 'Speechmatics' : null;
+        const activeHint = isAutomatic ? hintAuto : isAssembly ? hintAai : isSpeechmatics ? hintSm : isGroq ? hintGroq : isCloudflare ? hintCf : hintLocal;
         if (activeHint) {
             activeHint.classList.toggle('hint-warning', localUnsupported || !!missingKey);
             if (localUnsupported) {
@@ -764,9 +787,11 @@ export const appSettingsMethods = {
         }
 
         const sectionAai = document.getElementById('section-assemblyai-key');
+        const sectionSm = document.getElementById('section-speechmatics-key');
         const sectionGroq = document.getElementById('section-groq-key');
         const sectionCf = document.getElementById('section-cloudflare-key');
         if (sectionAai) sectionAai.style.display = isLocal ? 'none' : '';
+        if (sectionSm) sectionSm.style.display = isLocal ? 'none' : '';
         if (sectionGroq) sectionGroq.style.display = isLocal ? 'none' : '';
         if (sectionCf) sectionCf.style.display = isLocal ? 'none' : '';
         this._updateLlmProviderUI();
@@ -828,14 +853,17 @@ export const appSettingsMethods = {
         const llm = migrateLlmProvider(document.getElementById('select-llm-provider')?.value);
         const isLocal = mode === 'local';
         const isAutomatic = llm === 'automatic';
+        const isSpeechmaticsLlm = llm === 'speechmatics';
         const sectionLlm = document.getElementById('section-llm-provider');
         const labelFallback = document.getElementById('label-llm-fallback');
         const hintFallback = document.getElementById('hint-llm-fallback');
         const hintAuto = document.getElementById('hint-llm-automatic');
+        const hintSm = document.getElementById('hint-llm-speechmatics');
         if (sectionLlm) sectionLlm.style.display = isLocal ? 'none' : '';
         if (labelFallback) labelFallback.style.display = (!isLocal && !isAutomatic) ? '' : 'none';
-        if (hintFallback) hintFallback.style.display = (!isLocal && !isAutomatic) ? '' : 'none';
+        if (hintFallback) hintFallback.style.display = (!isLocal && !isAutomatic && !isSpeechmaticsLlm) ? '' : 'none';
         if (hintAuto) hintAuto.style.display = (!isLocal && isAutomatic) ? '' : 'none';
+        if (hintSm) hintSm.style.display = (!isLocal && isSpeechmaticsLlm) ? '' : 'none';
         this._updateChainUI();
     },
 
@@ -869,6 +897,8 @@ export const appSettingsMethods = {
     _refreshKeyStatus() {
         const aaiKey = document.getElementById('input-assemblyai-key')?.value.trim() || '';
         const aaiOk = aaiKey.length >= 20;
+        const smKey = document.getElementById('input-speechmatics-key')?.value.trim() || '';
+        const smOk = smKey.length >= 12;
         const groqKey = document.getElementById('input-groq-key')?.value.trim() || '';
         const cfAccount = document.getElementById('input-cloudflare-account-id')?.value.trim() || '';
         const cfToken = document.getElementById('input-cloudflare-token')?.value.trim() || '';
@@ -879,6 +909,11 @@ export const appSettingsMethods = {
         if (aaiStatus) {
             aaiStatus.className = 'key-status ' + (aaiKey === '' ? '' : aaiOk ? 'ok' : 'bad');
             aaiStatus.textContent = aaiKey === '' ? '' : aaiOk ? '✓ format ok' : '✗ check format';
+        }
+        const smStatus = document.getElementById('key-status-speechmatics');
+        if (smStatus) {
+            smStatus.className = 'key-status ' + (smKey === '' ? '' : smOk ? 'ok' : 'bad');
+            smStatus.textContent = smKey === '' ? '' : smOk ? '✓ format ok' : '✗ check format';
         }
         const groqStatus = document.getElementById('key-status-groq');
         if (groqStatus) {
@@ -918,6 +953,10 @@ export const appSettingsMethods = {
                 const apiKey = document.getElementById('input-assemblyai-key')?.value.trim() || '';
                 if (!apiKey) throw new Error('empty');
                 ok = await invoke('assemblyai_ping', { apiKey, region: 'global' });
+            } else if (provider === 'speechmatics') {
+                const apiKey = document.getElementById('input-speechmatics-key')?.value.trim() || '';
+                if (!apiKey) throw new Error('empty');
+                ok = await invoke('speechmatics_ping', { apiKey });
             } else if (provider === 'groq') {
                 const apiKey = document.getElementById('input-groq-key')?.value.trim() || '';
                 if (!apiKey) throw new Error('empty');
@@ -981,6 +1020,8 @@ export const appSettingsMethods = {
             cloudflare_enabled: true,
             assemblyai_api_key: document.getElementById('input-assemblyai-key')?.value.trim() || settings.assemblyai_api_key,
             assemblyai_enabled: document.getElementById('check-assemblyai-enabled')?.checked ?? settings.assemblyai_enabled,
+            speechmatics_api_key: document.getElementById('input-speechmatics-key')?.value.trim() || settings.speechmatics_api_key,
+            speechmatics_enabled: document.getElementById('check-speechmatics-enabled')?.checked ?? settings.speechmatics_enabled,
             azure_translator_enabled: document.getElementById('check-azure-enabled')?.checked ?? settings.azure_translator_enabled,
             azure_translator_key: document.getElementById('input-azure-key')?.value.trim() || settings.azure_translator_key,
             gemini_enabled: document.getElementById('check-gemini-enabled')?.checked ?? settings.gemini_enabled,
@@ -1001,7 +1042,15 @@ export const appSettingsMethods = {
         }
         const transEl = document.getElementById('chain-translation-display');
         if (transEl) {
-            transEl.textContent = transChain.length > 0 ? transChain.join(' → ') : 'None configured';
+            const llm = migrateLlmProvider(formSettings.llm_provider);
+            const sttHint = this.activeSttProvider || migrateTranslationMode(formSettings.translation_mode);
+            if (llm === 'speechmatics') {
+                const parts = sttHint === 'speechmatics' ? ['speechmatics (in-session)'] : [];
+                if (formSettings.llm_fallback !== false) parts.push(...transChain);
+                transEl.textContent = parts.length ? parts.join(' → ') : 'None configured';
+            } else {
+                transEl.textContent = transChain.length > 0 ? transChain.join(' → ') : 'None configured';
+            }
         }
         const runtimeEl = document.getElementById('chain-runtime-stt');
         if (runtimeEl) {

@@ -17,6 +17,7 @@ import { sessionStore } from './session-store.js';
 import { groqClient } from './groq-client.js';
 import { cloudflareClient } from './cloudflare-client.js';
 import { assemblyaiClient } from './assemblyai-client.js';
+import { speechmaticsClient } from './speechmatics-client.js';
 import {
     getSttStartOrder,
     clearSessionState,
@@ -57,6 +58,7 @@ class App {
         this.groqClient = groqClient;
         this.cloudflareClient = cloudflareClient;
         this.assemblyaiClient = assemblyaiClient;
+        this.speechmaticsClient = speechmaticsClient;
         this.activeSttProvider = null;
         this.activeSttClient = null;
         this._sttGeneration = 0;
@@ -430,6 +432,7 @@ class App {
         this._wireProviderClient(this.groqClient);
         this._wireProviderClient(this.cloudflareClient);
         this._wireProviderClient(this.assemblyaiClient);
+        this._wireProviderClient(this.speechmaticsClient);
     }
 
 
@@ -576,11 +579,12 @@ class App {
         const engineNames = {
             automatic: 'Auto',
             assemblyai: 'AssemblyAI',
+            speechmatics: 'Speechmatics',
             groq: 'Groq',
             cloudflare: 'Cloudflare',
             local: 'Local MLX',
         };
-        const keyField = { groq: 'groq_api_key', assemblyai: 'assemblyai_api_key' };
+        const keyField = { groq: 'groq_api_key', assemblyai: 'assemblyai_api_key', speechmatics: 'speechmatics_api_key' };
         const hasCloudflareKey = !!(s.cloudflare_account_id || '').trim() && !!(s.cloudflare_api_token || '').trim();
         const hasKey = mode === 'local'
             || (mode === 'automatic'
@@ -596,6 +600,7 @@ class App {
                 azure: 'Azure',
                 gemini: 'Gemini',
                 ollama: 'Ollama',
+                speechmatics: 'Speechmatics',
             };
             const llmName = mode === 'local' ? 'Local' : (llmNames[llm] || 'Auto');
             subT.textContent =

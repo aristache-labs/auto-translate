@@ -1,6 +1,6 @@
 /** Shared engine/mode helpers — no DOM or Tauri imports. */
 
-export const SUPPORTED_MODES = ['automatic', 'assemblyai', 'groq', 'cloudflare', 'local'];
+export const SUPPORTED_MODES = ['automatic', 'assemblyai', 'speechmatics', 'groq', 'cloudflare', 'local'];
 export const LEGACY_MODES = ['soniox', 'openai', 'qwen', 'standard'];
 
 export const REQUIRED_INIT_IDS = [
@@ -15,6 +15,7 @@ export const REQUIRED_INIT_IDS = [
     'input-cloudflare-account-id',
     'input-cloudflare-token',
     'input-assemblyai-key',
+    'input-speechmatics-key',
     'engine-pill',
 ];
 
@@ -30,6 +31,7 @@ export const SECRET_SETTING_KEYS = [
     'google_free_api_key',
     'tiktok_session_id',
     'assemblyai_api_key',
+    'speechmatics_api_key',
     'azure_translator_key',
     'gemini_api_key',
     'streaming_token',
@@ -45,6 +47,7 @@ export function engineClassFromMode(mode) {
     const normalized = migrateTranslationMode(mode);
     if (normalized === 'automatic') return 'automatic';
     if (normalized === 'assemblyai') return 'assemblyai';
+    if (normalized === 'speechmatics') return 'speechmatics';
     return normalized;
 }
 
@@ -123,6 +126,9 @@ export function clientConfigFromSettings(settings, mode = 'groq') {
         assemblyaiMaxTurnSilenceMs: settings.assemblyai_max_turn_silence_ms ?? 1280,
         assemblyaiVadThreshold: settings.assemblyai_vad_threshold ?? 0.4,
         assemblyaiEndOfTurnConfidence: settings.assemblyai_end_of_turn_confidence ?? 0.4,
+        speechmaticsApiKey: settings.speechmatics_api_key || '',
+        speechmaticsModel: settings.speechmatics_model || 'enhanced',
+        enableTranslation: (settings.llm_provider || 'automatic') === 'speechmatics',
     };
 }
 

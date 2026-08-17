@@ -18,6 +18,8 @@ test('current HTML has every required init ID', () => {
 });
 
 test('engine cards and pills use groq|cloudflare|local', () => {
+    assert.match(html, /data-engine-class="assemblyai"/);
+    assert.match(html, /data-engine-class="speechmatics"/);
     assert.match(html, /data-engine-class="groq"/);
     assert.match(html, /data-engine-class="cloudflare"/);
     assert.match(html, /data-engine-class="local"/);
@@ -29,6 +31,7 @@ test('app.js no longer binds removed Soniox/OpenAI IDs', () => {
     assert.equal(appJs.includes("getElementById('btn-toggle-key')"), false);
     assert.equal(appJs.includes("getElementById('link-soniox')"), false);
     assert.equal(appJs.includes('sonioxClient'), false);
+    assert.match(appJs, /speechmaticsClient/);
     assert.match(appJs, /btn-toggle-groq-key/);
     assert.match(appJs, /input-groq-key/);
     assert.match(appJs, /input-cloudflare-account-id/);

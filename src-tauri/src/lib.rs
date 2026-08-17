@@ -149,6 +149,8 @@ pub fn run() {
             commands::providers::groq_translate_text,
             commands::providers::assemblyai_streaming_token,
             commands::providers::assemblyai_ping,
+            commands::speechmatics::speechmatics_rt_token,
+            commands::speechmatics::speechmatics_ping,
             commands::providers::groq_ping,
             commands::providers::cloudflare_ping,
             commands::providers::azure_translate_text,

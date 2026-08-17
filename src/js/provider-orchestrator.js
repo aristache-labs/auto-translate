@@ -2,7 +2,7 @@
  * Provider orchestrator — STT and translation chains, circuit breakers, structured errors.
  */
 
-export const STT_CHAIN_DEFAULT = ['assemblyai', 'groq', 'cloudflare', 'local-stt'];
+export const STT_CHAIN_DEFAULT = ['assemblyai', 'speechmatics', 'groq', 'cloudflare', 'local-stt'];
 
 export const ERROR_TYPES = {
   TEMPORARY: 'temporary',
@@ -21,7 +21,7 @@ export const PROVIDER_CHAINS = {
   translation: TRANSLATION_CHAIN_DEFAULT,
 };
 
-const LLM_PROVIDER_IDS = TRANSLATION_CHAIN_DEFAULT;
+const LLM_PROVIDER_IDS = [...TRANSLATION_CHAIN_DEFAULT, 'speechmatics'];
 const LLM_PROVIDER_ALIASES = {
   automatic: 'automatic',
   openrouter: 'automatic',
@@ -260,6 +260,7 @@ export function formatErrorNotification(provider, errorType, isRetrying = false)
       groq: 'Groq rate limit exceeded',
       cloudflare: 'Cloudflare quota exceeded',
       assemblyai: 'AssemblyAI rate limit exceeded',
+      speechmatics: 'Speechmatics rate limit exceeded',
     },
     [ERROR_TYPES.CONFIG]: {
       gemini: 'Gemini API key is invalid or missing',
@@ -267,6 +268,7 @@ export function formatErrorNotification(provider, errorType, isRetrying = false)
       cloudflare: 'Cloudflare credentials are invalid or missing',
       azure: 'Azure Translator key is invalid or missing',
       assemblyai: 'AssemblyAI API key is invalid or missing',
+      speechmatics: 'Speechmatics API key is invalid or missing',
     },
     [ERROR_TYPES.UNSUPPORTED]: {
       local: 'Local STT not available on this platform',
@@ -294,6 +296,8 @@ function isSttConfigured(settings, id, platform) {
   switch (id) {
     case 'assemblyai':
       return settings.assemblyai_enabled !== false && hasText(settings.assemblyai_api_key);
+    case 'speechmatics':
+      return settings.speechmatics_enabled !== false && hasText(settings.speechmatics_api_key);
     case 'groq':
       return settings.groq_enabled !== false && hasText(settings.groq_api_key);
     case 'cloudflare':
@@ -324,6 +328,8 @@ export function sttModelFor(settings = {}, provider) {
   switch (provider) {
     case 'assemblyai':
       return settings.assemblyai_streaming_model || 'universal-streaming-english';
+    case 'speechmatics':
+      return settings.speechmatics_model || 'enhanced';
     case 'groq':
       return settings.groq_stt_model || 'whisper-large-v3-turbo';
     case 'cloudflare':
@@ -340,6 +346,8 @@ export function translationModelFor(settings = {}, provider) {
   switch (provider) {
     case 'groq-llm':
       return settings.groq_llm_model || 'openai/gpt-oss-120b';
+    case 'speechmatics':
+      return 'in-session';
     case 'azure':
       return 'microsoft-translator';
     case 'gemini':
@@ -405,9 +413,15 @@ export function logSessionEngines(settings = {}, platform = {}) {
   const sttMode = settings.translation_mode || 'automatic';
   const llmMode = migrateLlmProvider(settings.llm_provider);
   const sttOrder = getSttStartOrder(settings, platform);
-  const llmOrder = getEffectiveTranslationChain(settings, sttOrder[0] || 'groq');
+  const activeStt = sttOrder[0] || 'groq';
+  const llmOrder = getEffectiveTranslationChain(settings, activeStt);
+  const llmParts = [];
+  if (usesSpeechmaticsTranslation(settings, activeStt)) {
+    llmParts.push('speechmatics (in-session)');
+  }
+  llmParts.push(...llmOrder.map((id) => formatEngineEntry(id, translationModelFor(settings, id))));
   emitEngineLog('stt', `mode=${sttMode} chain=${sttOrder.map((id) => formatEngineEntry(id, sttModelFor(settings, id))).join(' → ') || '(none)'}`);
-  emitEngineLog('llm', `mode=${llmMode} chain=${llmOrder.map((id) => formatEngineEntry(id, translationModelFor(settings, id))).join(' → ') || '(none)'}`);
+  emitEngineLog('llm', `mode=${llmMode} chain=${llmParts.join(' → ') || '(none)'}`);
 }
 
 export function getEffectiveSTTChain(settings = {}, platform = {}) {
@@ -417,16 +431,24 @@ export function getEffectiveSTTChain(settings = {}, platform = {}) {
   });
 }
 
-export function translationOrderForSettings(settings = {}) {
+export function usesSpeechmaticsTranslation(settings = {}, sttProvider = '') {
+  return migrateLlmProvider(settings.llm_provider) === 'speechmatics'
+    && String(sttProvider || '') === 'speechmatics';
+}
+
+export function translationOrderForSettings(settings = {}, _sttProvider = '') {
   const llm = migrateLlmProvider(settings.llm_provider);
   const fallback = settings.llm_fallback !== false;
+  if (llm === 'speechmatics') {
+    return fallback ? [...TRANSLATION_CHAIN_DEFAULT] : [];
+  }
   if (llm === 'automatic') return [...TRANSLATION_CHAIN_DEFAULT];
   if (!fallback) return [llm];
   return [llm, ...TRANSLATION_CHAIN_DEFAULT.filter((id) => id !== llm)];
 }
 
-export function getEffectiveTranslationChain(settings = {}, _sttProvider = 'groq') {
-  return translationOrderForSettings(settings).filter((id) => {
+export function getEffectiveTranslationChain(settings = {}, sttProvider = 'groq') {
+  return translationOrderForSettings(settings, sttProvider).filter((id) => {
     if (!isTranslationConfigured(settings, id)) return false;
     return !isCircuitBreakerOpen(breakerKey('translation', id));
   });
@@ -435,11 +457,17 @@ export function getEffectiveTranslationChain(settings = {}, _sttProvider = 'groq
 export function getSttStartOrder(settings = {}, platform = {}) {
   const chain = getEffectiveSTTChain(settings, platform);
   const mode = settings.translation_mode || 'automatic';
-  if (mode === 'automatic') return chain;
-  const mapped = mode === 'local' ? 'local-stt' : mode;
-  const idx = chain.indexOf(mapped);
-  if (idx < 0) return chain;
-  return chain.slice(idx);
+  let order = chain;
+  if (mode !== 'automatic') {
+    const mapped = mode === 'local' ? 'local-stt' : mode;
+    const idx = chain.indexOf(mapped);
+    if (idx >= 0) order = chain.slice(idx);
+  }
+  // In-session translation only exists on the Speechmatics socket.
+  if (migrateLlmProvider(settings.llm_provider) === 'speechmatics' && chain.includes('speechmatics')) {
+    order = ['speechmatics', ...order.filter((id) => id !== 'speechmatics')];
+  }
+  return order;
 }
 
 export function nextSttProvider(settings, platform, currentProvider) {
@@ -450,7 +478,7 @@ export function nextSttProvider(settings, platform, currentProvider) {
 }
 
 export function preferredRecoveryStt(settings, platform, currentProvider) {
-  const chain = getEffectiveSTTChain(settings, platform);
+  const chain = getSttStartOrder(settings, platform);
   if (!chain.length) return null;
   const currentIdx = chain.indexOf(currentProvider);
   if (currentIdx <= 0) return null;
@@ -703,6 +731,7 @@ export default {
   getEffectiveTranslationChain,
   translationOrderForSettings,
   migrateLlmProvider,
+  usesSpeechmaticsTranslation,
   TRANSLATION_CHAIN_DEFAULT,
   getEffectiveSTTChain,
   setSessionStickyProvider,

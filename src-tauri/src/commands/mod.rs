@@ -10,5 +10,6 @@ pub mod providers;
 pub mod qwen_realtime;
 pub mod session_store;
 pub mod settings;
+pub mod speechmatics;
 pub mod tiktok_tts;
 pub mod transcript;
