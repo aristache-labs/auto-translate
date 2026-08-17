@@ -282,12 +282,12 @@ test('live translation throttle fires on new words or interval', () => {
     lastSentText: 'one two three',
     lastSentAt: Date.now(),
   }), false);
-  // 1 word added with only 100ms elapsed (well under 600ms threshold)
+  // 1 word added with only 100ms elapsed (well under 300ms threshold)
   assert.equal(shouldFireLiveTranslation({
     text: 'one two three four',
     lastSentText: 'one two three',
     lastSentAt: Date.now() - 100,
-    minIntervalMs: 600,
+    minIntervalMs: 300,
   }), false);
   // 1 word added with enough time elapsed
   assert.equal(shouldFireLiveTranslation({

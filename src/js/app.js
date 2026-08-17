@@ -43,6 +43,7 @@ import {
     isCircuitBreakerHalfOpen,
     LIVE_TRANSLATION_TIMEOUT_MS,
     LIVE_TRANSLATION_MIN_INTERVAL_MS,
+    LIVE_TRANSLATION_MIN_NEW_WORDS,
     countWords,
     ERROR_TYPES,
 } from './provider-orchestrator.js';
@@ -992,7 +993,7 @@ class App {
         const cfToken = document.getElementById('input-cloudflare-token');
         if (cfToken) cfToken.value = s.cloudflare_api_token || '';
         this._setSelectValue('select-groq-stt-model', s.groq_stt_model || 'whisper-large-v3-turbo');
-        this._setSelectValue('select-groq-llm-model', s.groq_llm_model || 'openai/gpt-oss-20b');
+        this._setSelectValue('select-groq-llm-model', s.groq_llm_model || 'llama-3.1-8b-instant');
         this._setSelectValue('select-cloudflare-stt-model', s.cloudflare_stt_model || '@cf/openai/whisper-large-v3-turbo');
         this._setSelectValue('select-cloudflare-llm-model', s.cloudflare_llm_model || '@cf/meta/llama-3.1-8b-instruct-fast');
         const orKey = document.getElementById('input-openrouter-key');
@@ -1174,7 +1175,7 @@ class App {
         const settings = {
             groq_api_key: document.getElementById('input-groq-key')?.value.trim() || '',
             groq_stt_model: document.getElementById('select-groq-stt-model')?.value || 'whisper-large-v3-turbo',
-            groq_llm_model: document.getElementById('select-groq-llm-model')?.value || 'openai/gpt-oss-20b',
+            groq_llm_model: document.getElementById('select-groq-llm-model')?.value || 'llama-3.1-8b-instant',
             cloudflare_account_id: document.getElementById('input-cloudflare-account-id')?.value.trim() || '',
             cloudflare_api_token: document.getElementById('input-cloudflare-token')?.value.trim() || '',
             cloudflare_stt_model: document.getElementById('select-cloudflare-stt-model')?.value || '@cf/openai/whisper-large-v3-turbo',
@@ -2893,7 +2894,7 @@ class App {
         const timeSinceLast = this._liveSentAt ? now - this._liveSentAt : Infinity;
         const newWords = countWords(chunk) - countWords(this._liveSentText);
         const shouldFire = newWords >= LIVE_TRANSLATION_MIN_NEW_WORDS
-            || timeSinceLast >= LIVE_TRANSLATION_MIN_INTERVAL_MS * 1.5;
+            || timeSinceLast >= LIVE_TRANSLATION_MIN_INTERVAL_MS;
 
         console.log(`[live-tx] partial chars=${chunk.length} newWords=${newWords} timeSinceLast=${Math.round(timeSinceLast)}ms shouldFire=${shouldFire} gen=${this._liveTranslationGen}`);
 

@@ -458,7 +458,7 @@ function translatedFromResult(result) {
 }
 
 export const LIVE_TRANSLATION_TIMEOUT_MS = 2000;
-export const LIVE_TRANSLATION_MIN_INTERVAL_MS = 600;
+export const LIVE_TRANSLATION_MIN_INTERVAL_MS = 300;
 export const LIVE_TRANSLATION_MIN_NEW_WORDS = 3;
 
 export function countWords(text) {

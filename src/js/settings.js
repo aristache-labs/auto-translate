@@ -10,7 +10,7 @@ const { invoke } = window.__TAURI__.core;
 const DEFAULT_SETTINGS = {
   groq_api_key: '',
   groq_stt_model: 'whisper-large-v3-turbo',
-  groq_llm_model: 'openai/gpt-oss-20b',  // Updated: gpt-oss-20b via OpenRouter
+  groq_llm_model: 'llama-3.1-8b-instant',
   groq_enabled: true,
   llm_provider: 'automatic',
   openrouter_api_key: '',
@@ -102,11 +102,11 @@ async load() {
 
 /**
  * Migrate deprecated model defaults while preserving custom selections
- * - Old Groq LLM: llama-3.1-8b-instant → openai/gpt-oss-20b (via OpenRouter)
+ * - Old Groq LLM: openai/gpt-oss-20b (404) → llama-3.1-8b-instant (fast, reliable)
  * - Old Cloudflare LLM: llama-3 / llama-3.1 instruct → llama-3.1-8b-instruct-fast
  */
 _migrateModelDefaults(settings) {
-  const DEPRECATED_GROQ_MODEL = 'llama-3.1-8b-instant';
+  const DEPRECATED_GROQ_MODEL = 'openai/gpt-oss-20b';
   const DEPRECATED_CF_MODELS = new Set([
     '@cf/meta/llama-3-8b-instruct',
     '@cf/meta/llama-3.1-8b-instruct',
