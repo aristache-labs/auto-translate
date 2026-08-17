@@ -113,7 +113,7 @@ export function clientConfigFromSettings(settings, mode = 'groq') {
             ? (settings.cloudflare_stt_model || '@cf/openai/whisper-large-v3-turbo')
             : (settings.groq_stt_model || 'whisper-large-v3-turbo'),
         llmModel: isCf
-            ? (settings.cloudflare_llm_model || '@cf/meta/llama-3.1-8b-instruct-fast')
+            ? (settings.cloudflare_llm_model || '@cf/meta/llama-3.1-8b-instruct-fp8-fast')
             : (settings.groq_llm_model || 'openai/gpt-oss-120b'),
         llmProvider: settings.llm_provider || 'automatic',
         openrouterApiKey: settings.openrouter_api_key || '',

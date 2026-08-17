@@ -50,7 +50,7 @@ pub struct Settings {
     /// Cloudflare Workers AI LLM used for translation
     #[serde(default = "default_cloudflare_llm_model")]
     pub cloudflare_llm_model: String,
-    /// LLM source: "automatic" | "azure" | "gemini" | "cloudflare-llm" | "groq-llm" | "ollama"
+    /// LLM source: "automatic" | "azure" | "gemini" | "cloudflare-llm" | "ollama"
     #[serde(default = "default_llm_provider")]
     pub llm_provider: String,
     /// When a specific LLM is selected, continue down the automatic chain on failure.
@@ -297,7 +297,7 @@ fn default_cloudflare_stt_model() -> String {
 }
 
 fn default_cloudflare_llm_model() -> String {
-    "@cf/meta/llama-3.1-8b-instruct-fast".to_string()
+    "@cf/meta/llama-3.1-8b-instruct-fp8-fast".to_string()
 }
 
 fn default_llm_provider() -> String {
@@ -417,7 +417,7 @@ mod tests {
         assert_eq!(s.groq_llm_model, "openai/gpt-oss-120b");
         assert_eq!(
             s.cloudflare_llm_model,
-            "@cf/meta/llama-3.1-8b-instruct-fast"
+            "@cf/meta/llama-3.1-8b-instruct-fp8-fast"
         );
         assert_eq!(s.llm_provider, "automatic");
         assert!(s.llm_fallback);

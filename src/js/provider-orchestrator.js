@@ -14,7 +14,7 @@ export const ERROR_TYPES = {
 
 export const ERROR_KINDS = ERROR_TYPES;
 
-export const TRANSLATION_CHAIN_DEFAULT = ['azure', 'gemini', 'cloudflare-llm', 'groq-llm', 'ollama'];
+export const TRANSLATION_CHAIN_DEFAULT = ['azure', 'gemini', 'cloudflare-llm', 'ollama'];
 
 export const PROVIDER_CHAINS = {
   stt: STT_CHAIN_DEFAULT,
@@ -27,7 +27,8 @@ const LLM_PROVIDER_ALIASES = {
   openrouter: 'automatic',
   engine: 'automatic',
   cloudflare: 'cloudflare-llm',
-  groq: 'groq-llm',
+  groq: 'automatic',
+  'groq-llm': 'automatic',
 };
 
 export function migrateLlmProvider(value) {
@@ -351,7 +352,7 @@ export function translationModelFor(settings = {}, provider) {
     case 'groq-llm':
       return settings.groq_llm_model || 'openai/gpt-oss-120b';
     case 'cloudflare-llm':
-      return settings.cloudflare_llm_model || '@cf/meta/llama-3.1-8b-instruct-fast';
+      return settings.cloudflare_llm_model || '@cf/meta/llama-3.1-8b-instruct-fp8-fast';
     case 'azure':
       return 'microsoft-translator';
     case 'gemini':

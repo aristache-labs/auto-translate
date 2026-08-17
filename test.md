@@ -1,0 +1,138 @@
+---
+description: Multilingual encoder-decoder (seq-to-seq) model trained for Many-to-Many multilingual translation
+title: m2m100-1.2b
+image: https://developers.cloudflare.com/og-docs.png
+---
+
+[Skip to content](#main-content)
+
+> Documentation Index  
+> Fetch the complete documentation index at: https://developers.cloudflare.com/llms.txt  
+> Use this file to discover all available pages before exploring further.
+
+![Meta logo](https://developers.cloudflare.com/_astro/meta.CTzB_ysm.svg)
+
+# m2m100-1.2b
+
+Translation • Meta
+
+Copy as Markdown|[View as Markdown](https://developers.cloudflare.com/ai/models/%40cf/meta/m2m100-1.2b/index.md)|[Agent setup](https://developers.cloudflare.com/agent-setup/)
+
+`@cf/meta/m2m100-1.2b`
+
+* Cloudflare-hosted
+* Batch
+
+Multilingual encoder-decoder (seq-to-seq) model trained for Many-to-Many multilingual translation
+
+| Model Info        |                                                                                    |
+| ----------------- | ---------------------------------------------------------------------------------- |
+| Terms and License | [link ↗](https://github.com/facebookresearch/fairseq/blob/main/LICENSE)            |
+| More information  | [link ↗](https://github.com/facebookresearch/fairseq/tree/main/examples/m2m%5F100) |
+| Batch             | Yes                                                                                |
+| Unit Pricing      | $0.34 per M input tokens, $0.34 per M output tokens                                |
+
+## Usage
+
+```ts
+
+export interface Env {
+  AI: Ai;
+}
+
+export default {
+  async fetch(request, env): Promise<Response> {
+
+    const response = await env.AI.run(
+      "@cf/meta/m2m100-1.2b",
+      {
+        text: "I'll have an order of the moule frites",
+        source_lang: "english", // defaults to english
+        target_lang: "french",
+      }
+    );
+
+    return new Response(JSON.stringify(response));
+  },
+} satisfies ExportedHandler<Env>;
+```
+
+```py
+
+import requests
+
+API_BASE_URL = "https://api.cloudflare.com/client/v4/accounts/{ACCOUNT_ID}/ai/run/"
+headers = {"Authorization": "Bearer {API_TOKEN}"}
+
+def run(model, input):
+    response = requests.post(f"{API_BASE_URL}{model}", headers=headers, json=input)
+    return response.json()
+
+output = run('@cf/meta/m2m100-1.2b', {
+  "text": "I'll have an order of the moule frites",
+  "source_lang": "english",
+  "target_lang": "french"
+})
+
+print(output)
+```
+
+```sh
+
+curl https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/ai/run/@cf/meta/m2m100-1.2b  \
+    -X POST  \
+    -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"  \
+    -d '{ "text": "Ill have an order of the moule frites", "source_lang": "english", "target_lang": "french" }'
+```
+
+## Parameters
+
+Synchronous — Send a request and receive a complete response
+
+text
+
+`string`requiredminLength: 1The text to be translated
+
+source\_lang
+
+`string`default: enThe language code of the source text (e.g., 'en' for English). Defaults to 'en' if not specified
+
+target\_lang
+
+`string`requiredThe language code to translate the text into (e.g., 'es' for Spanish)
+
+request\_id
+
+`string`The async request id that can be used to obtain the results.
+
+Batch — Send multiple requests in a single API call
+
+▶requests\[\]
+
+`array`requiredBatch of the embeddings requests to run using async-queue
+
+request\_id
+
+`string`The async request id that can be used to obtain the results.
+
+## API Schemas (Raw)
+
+SynchronousInput
+
+SynchronousOutput
+
+BatchInput
+
+BatchOutput
+
+Was this helpful?
+
+YesNo
+
+## On this page
+
+[![](https://developers.cloudflare.com/_astro/logo.te5VL_aD.svg)Docs](https://developers.cloudflare.com/)
+
+```json
+{"@context":"https://schema.org","@type":"TechArticle","@id":"https://developers.cloudflare.com/ai/models/%40cf/meta/m2m100-1.2b/#page","headline":"m2m100-1.2b (Meta) · Cloudflare AI docs · Cloudflare AI docs","description":"Multilingual encoder-decoder (seq-to-seq) model trained for Many-to-Many multilingual translation","url":"https://developers.cloudflare.com/ai/models/%40cf/meta/m2m100-1.2b/","inLanguage":"en","image":"https://developers.cloudflare.com/og-docs.png","publisher":{"@type":"Organization","name":"Cloudflare","url":"https://www.cloudflare.com/"},"isPartOf":{"@type":"WebSite","@id":"https://developers.cloudflare.com/#website","name":"Cloudflare Docs","url":"https://developers.cloudflare.com/"}}
+```

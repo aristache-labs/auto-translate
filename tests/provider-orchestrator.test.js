@@ -39,7 +39,7 @@ const FULL_SETTINGS = {
   cloudflare_enabled: true,
   cloudflare_account_id: 'acct',
   cloudflare_api_token: 'tok',
-  cloudflare_llm_model: '@cf/meta/llama-3.1-8b-instruct-fast',
+  cloudflare_llm_model: '@cf/meta/llama-3.1-8b-instruct-fp8-fast',
   local_stt_enabled: true,
   openrouter_enabled: true,
   openrouter_api_key: 'sk-or-123',
@@ -150,13 +150,14 @@ test('unsupported Local STT is skipped on Windows', () => {
   assert.deepEqual(chain, ['assemblyai', 'groq', 'cloudflare']);
 });
 
-test('effective translation order is Azure → Gemini → Cloudflare → Groq → Ollama', () => {
-  const expected = ['azure', 'gemini', 'cloudflare-llm', 'groq-llm', 'ollama'];
+test('effective translation order is Azure → Gemini → Cloudflare → Ollama', () => {
+  const expected = ['azure', 'gemini', 'cloudflare-llm', 'ollama'];
   assert.deepEqual(getEffectiveTranslationChain(FULL_SETTINGS, 'groq'), expected);
   assert.deepEqual(getEffectiveTranslationChain(FULL_SETTINGS, 'cloudflare'), expected);
   assert.deepEqual(getEffectiveTranslationChain(FULL_SETTINGS, 'assemblyai'), expected);
   assert.deepEqual(getEffectiveTranslationChain(FULL_SETTINGS, 'local-stt'), expected);
   assert.equal(expected.includes('openrouter'), false);
+  assert.equal(expected.includes('groq-llm'), false);
   assert.equal(expected.includes('assemblyai'), false);
 });
 
@@ -165,21 +166,21 @@ test('manual LLM with fallback starts at the selected provider then follows Auto
     ...FULL_SETTINGS,
     llm_provider: 'azure',
     llm_fallback: true,
-  }), ['azure', 'gemini', 'cloudflare-llm', 'groq-llm', 'ollama']);
+  }), ['azure', 'gemini', 'cloudflare-llm', 'ollama']);
   assert.deepEqual(getEffectiveTranslationChain({
     ...FULL_SETTINGS,
     llm_provider: 'gemini',
     llm_fallback: true,
-  }), ['gemini', 'azure', 'cloudflare-llm', 'groq-llm', 'ollama']);
+  }), ['gemini', 'azure', 'cloudflare-llm', 'ollama']);
   assert.deepEqual(getEffectiveTranslationChain({
     ...FULL_SETTINGS,
     llm_provider: 'groq-llm',
     llm_fallback: false,
-  }), ['groq-llm']);
+  }), ['azure', 'gemini', 'cloudflare-llm', 'ollama']);
   assert.deepEqual(getEffectiveTranslationChain({
     ...FULL_SETTINGS,
     llm_provider: 'openrouter',
-  }), ['azure', 'gemini', 'cloudflare-llm', 'groq-llm', 'ollama']);
+  }), ['azure', 'gemini', 'cloudflare-llm', 'ollama']);
 });
 
 test('manual Groq primary starts at Groq then continues down the chain', () => {

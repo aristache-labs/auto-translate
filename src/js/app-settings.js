@@ -315,9 +315,8 @@ export const appSettingsMethods = {
         const cfToken = document.getElementById('input-cloudflare-token');
         if (cfToken) cfToken.value = s.cloudflare_api_token || '';
         this._setSelectValue('select-groq-stt-model', s.groq_stt_model || 'whisper-large-v3-turbo');
-        this._setSelectValue('select-groq-llm-model', s.groq_llm_model || 'openai/gpt-oss-120b');
         this._setSelectValue('select-cloudflare-stt-model', s.cloudflare_stt_model || '@cf/openai/whisper-large-v3-turbo');
-        this._setSelectValue('select-cloudflare-llm-model', s.cloudflare_llm_model || '@cf/meta/llama-3.1-8b-instruct-fast');
+        this._setSelectValue('select-cloudflare-llm-model', s.cloudflare_llm_model || '@cf/meta/llama-3.1-8b-instruct-fp8-fast');
         const orKey = document.getElementById('input-openrouter-key');
         if (orKey) orKey.value = s.openrouter_api_key || '';
         this._setSelectValue('select-llm-provider', migrateLlmProvider(s.llm_provider));
@@ -525,11 +524,10 @@ export const appSettingsMethods = {
         const settings = {
             groq_api_key: document.getElementById('input-groq-key')?.value.trim() || '',
             groq_stt_model: document.getElementById('select-groq-stt-model')?.value || 'whisper-large-v3-turbo',
-            groq_llm_model: document.getElementById('select-groq-llm-model')?.value || 'openai/gpt-oss-120b',
             cloudflare_account_id: document.getElementById('input-cloudflare-account-id')?.value.trim() || '',
             cloudflare_api_token: document.getElementById('input-cloudflare-token')?.value.trim() || '',
             cloudflare_stt_model: document.getElementById('select-cloudflare-stt-model')?.value || '@cf/openai/whisper-large-v3-turbo',
-            cloudflare_llm_model: document.getElementById('select-cloudflare-llm-model')?.value || '@cf/meta/llama-3.1-8b-instruct-fast',
+            cloudflare_llm_model: document.getElementById('select-cloudflare-llm-model')?.value || '@cf/meta/llama-3.1-8b-instruct-fp8-fast',
             llm_provider: migrateLlmProvider(document.getElementById('select-llm-provider')?.value),
             llm_fallback: document.getElementById('check-llm-fallback')?.checked !== false,
             openrouter_api_key: document.getElementById('input-openrouter-key')?.value.trim() || '',
@@ -858,9 +856,7 @@ export const appSettingsMethods = {
         if (labelFallback) labelFallback.style.display = (!isLocal && !isAutomatic) ? '' : 'none';
         if (hintFallback) hintFallback.style.display = (!isLocal && !isAutomatic) ? '' : 'none';
         if (hintAuto) hintAuto.style.display = (!isLocal && isAutomatic) ? '' : 'none';
-        const groqLlm = document.getElementById('select-groq-llm-model');
         const cfLlm = document.getElementById('select-cloudflare-llm-model');
-        if (groqLlm) groqLlm.style.display = '';
         if (cfLlm) cfLlm.style.display = '';
         this._updateChainUI();
     },

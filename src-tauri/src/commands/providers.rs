@@ -17,7 +17,7 @@ const GROQ_STT_MODEL: &str = "whisper-large-v3-turbo";
 const GROQ_CHAT_MODEL: &str = "openai/gpt-oss-120b";
 
 const CF_WHISPER_MODEL: &str = "@cf/openai/whisper-large-v3-turbo";
-const CF_LLM_MODEL: &str = "@cf/meta/llama-3.1-8b-instruct-fast";
+const CF_LLM_MODEL: &str = "@cf/meta/llama-3.1-8b-instruct-fp8-fast";
 const OPENROUTER_CHAT_URL: &str = "https://openrouter.ai/api/v1/chat/completions";
 const OPENROUTER_MODELS_URL: &str = "https://openrouter.ai/api/v1/models";
 const OPENROUTER_CHAT_MODEL: &str = "openai/gpt-4o-mini";
@@ -250,19 +250,39 @@ fn http_error_status(status: reqwest::StatusCode, body: &str) -> String {
 fn resolve_cloudflare_llm(provided: Option<&str>) -> String {
     let model = resolve_model(provided, CF_LLM_MODEL);
     match model.as_str() {
-        // Deprecated / retired Workers AI models — force current default
-        "@cf/meta/llama-3-8b-instruct" | "@cf/meta/llama-3.1-8b-instruct" => {
-            CF_LLM_MODEL.to_string()
-        }
-        _ => model,
+        "@cf/qwen/qwen3-30b-a3b-fp8" | "@cf/meta/llama-3.1-8b-instruct-fp8-fast" => model,
+        _ => CF_LLM_MODEL.to_string(),
     }
+}
+
+fn cloudflare_translate_payload(
+    source_language: &str,
+    target_language: &str,
+    text: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "messages": [
+            {"role": "system", "content": translation_system_prompt(target_language)},
+            {"role": "user", "content": translation_prompt(source_language, target_language, text)}
+        ]
+    })
+}
+
+fn cloudflare_translated_text(parsed: &serde_json::Value) -> String {
+    parsed
+        .pointer("/result/translated_text")
+        .or_else(|| parsed.pointer("/result/response"))
+        .or_else(|| parsed.pointer("/result/output"))
+        .or_else(|| parsed.get("translated_text"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string()
 }
 
 const GROQ_LLM_ALLOWED: &[&str] = &[
     "openai/gpt-oss-120b",
     "openai/gpt-oss-20b",
-    "meta-llama/llama-prompt-guard-2-22m",
-    "meta-llama/llama-prompt-guard-2-86m",
     "qwen/qwen3.6-27b",
 ];
 
@@ -273,6 +293,80 @@ fn resolve_groq_llm(provided: Option<&str>) -> String {
         return model;
     }
     GROQ_CHAT_MODEL.to_string()
+}
+
+fn groq_is_qwen(model: &str) -> bool {
+    model.starts_with("qwen/")
+}
+
+fn groq_is_gpt_oss(model: &str) -> bool {
+    model.starts_with("openai/gpt-oss")
+}
+
+fn groq_translate_payload(
+    llm_model: &str,
+    source_language: &str,
+    target_language: &str,
+    text: &str,
+) -> serde_json::Value {
+    if groq_is_gpt_oss(llm_model) {
+        // Groq docs: avoid system prompts on GPT-OSS; 20b otherwise burns the
+        // live-tx budget on reasoning and the chain falls through.
+        let instructions = format!(
+            "{}\n\n{}",
+            translation_system_prompt(target_language),
+            translation_prompt(source_language, target_language, text)
+        );
+        return serde_json::json!({
+            "model": llm_model,
+            "messages": [{ "role": "user", "content": instructions }],
+            "temperature": 0.6,
+            "reasoning_effort": "low",
+            "include_reasoning": false,
+            "max_completion_tokens": 1024
+        });
+    }
+
+    let mut payload = serde_json::json!({
+        "model": llm_model,
+        "messages": [
+            {"role": "system", "content": translation_system_prompt(target_language)},
+            {"role": "user", "content": translation_prompt(source_language, target_language, text)}
+        ]
+    });
+    if groq_is_qwen(llm_model) {
+        payload["reasoning_effort"] = serde_json::Value::String("none".into());
+        payload["reasoning_format"] = serde_json::Value::String("hidden".into());
+    } else {
+        payload["temperature"] = serde_json::json!(0.2);
+    }
+    payload
+}
+
+fn groq_message_text(parsed: &serde_json::Value) -> String {
+    let msg = match parsed.pointer("/choices/0/message") {
+        Some(value) => value,
+        None => return String::new(),
+    };
+    let content = msg.get("content").and_then(|v| v.as_str()).unwrap_or("");
+    let trimmed = strip_think_tags(content);
+    if !trimmed.is_empty() {
+        return trimmed;
+    }
+    msg.get("reasoning_content")
+        .or_else(|| msg.get("reasoning"))
+        .and_then(|v| v.as_str())
+        .map(strip_think_tags)
+        .unwrap_or_default()
+}
+
+fn strip_think_tags(text: &str) -> String {
+    let mut out = text.to_string();
+    while let Some(start) = out.find("<think>") {
+        let Some(end) = out[start..].find("</think>") else { break };
+        out.replace_range(start..start + end + "</think>".len(), "");
+    }
+    out.trim().to_string()
 }
 
 async fn groq_transcribe(
@@ -329,14 +423,7 @@ async fn groq_translate(
     if source_language == target_language {
         return Ok(text.to_string());
     }
-    let payload = serde_json::json!({
-        "model": llm_model,
-        "temperature": 0.2,
-        "messages": [
-            {"role": "system", "content": translation_system_prompt(target_language)},
-            {"role": "user", "content": translation_prompt(source_language, target_language, text)}
-        ]
-    });
+    let payload = groq_translate_payload(llm_model, source_language, target_language, text);
     let resp = http()
         .post(GROQ_CHAT_URL)
         .bearer_auth(api_key)
@@ -351,12 +438,7 @@ async fn groq_translate(
     }
     let parsed: serde_json::Value =
         serde_json::from_str(&body).map_err(|e| format!("Groq chat JSON: {e}"))?;
-    Ok(parsed
-        .pointer("/choices/0/message/content")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .trim()
-        .to_string())
+    Ok(groq_message_text(&parsed))
 }
 
 fn cf_run_url(account_id: &str, model: &str) -> String {
@@ -414,12 +496,7 @@ async fn cloudflare_translate(
     if source_language == target_language {
         return Ok(text.to_string());
     }
-    let payload = serde_json::json!({
-        "messages": [
-            {"role": "system", "content": translation_system_prompt(target_language)},
-            {"role": "user", "content": translation_prompt(source_language, target_language, text)}
-        ]
-    });
+    let payload = cloudflare_translate_payload(source_language, target_language, text);
     let resp = http()
         .post(cf_run_url(account_id, llm_model))
         .bearer_auth(api_token)
@@ -434,14 +511,7 @@ async fn cloudflare_translate(
     }
     let parsed: serde_json::Value =
         serde_json::from_str(&body).map_err(|e| format!("Cloudflare LLM JSON: {e}"))?;
-    let translated = parsed
-        .pointer("/result/response")
-        .or_else(|| parsed.pointer("/result/output"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .trim()
-        .to_string();
-    Ok(translated)
+    Ok(cloudflare_translated_text(&parsed))
 }
 
 async fn openrouter_translate(
@@ -1648,6 +1718,74 @@ mod tests {
             resolve_groq_llm(Some("llama-3.1-8b-instant")),
             "openai/gpt-oss-120b"
         );
+        assert_eq!(
+            resolve_groq_llm(Some("meta-llama/llama-prompt-guard-2-22m")),
+            "openai/gpt-oss-120b"
+        );
+    }
+
+    #[test]
+    fn groq_qwen_payload_disables_reasoning() {
+        let payload = groq_translate_payload("qwen/qwen3.6-27b", "en", "ro", "hello");
+        assert_eq!(payload["reasoning_effort"], "none");
+        assert_eq!(payload["reasoning_format"], "hidden");
+        assert!(payload.get("temperature").is_none());
+        let gpt = groq_translate_payload("openai/gpt-oss-20b", "en", "ro", "hello");
+        assert_eq!(gpt["temperature"], 0.6);
+        assert_eq!(gpt["reasoning_effort"], "low");
+        assert_eq!(gpt["include_reasoning"], false);
+        assert_eq!(gpt["messages"][0]["role"], "user");
+        assert_eq!(gpt["messages"].as_array().map(|a| a.len()), Some(1));
+        let gpt120 = groq_translate_payload("openai/gpt-oss-120b", "en", "ro", "hello");
+        assert_eq!(gpt120["reasoning_effort"], "low");
+        assert_eq!(gpt120["include_reasoning"], false);
+    }
+
+    #[test]
+    fn groq_message_text_prefers_content_then_reasoning() {
+        let parsed = serde_json::json!({
+            "choices": [{ "message": { "content": "<think>x</think> salut" } }]
+        });
+        assert_eq!(groq_message_text(&parsed), "salut");
+        let reasoned = serde_json::json!({
+            "choices": [{ "message": { "content": "", "reasoning_content": "salut" } }]
+        });
+        assert_eq!(groq_message_text(&reasoned), "salut");
+    }
+
+    #[test]
+    fn resolve_cloudflare_llm_keeps_allowed_chat_ids() {
+        assert_eq!(
+            resolve_cloudflare_llm(Some("@cf/meta/llama-3.1-8b-instruct-fp8-fast")),
+            "@cf/meta/llama-3.1-8b-instruct-fp8-fast"
+        );
+        assert_eq!(
+            resolve_cloudflare_llm(Some("@cf/qwen/qwen3-30b-a3b-fp8")),
+            "@cf/qwen/qwen3-30b-a3b-fp8"
+        );
+        assert_eq!(
+            resolve_cloudflare_llm(Some("@cf/meta/m2m100-1.2b")),
+            "@cf/meta/llama-3.1-8b-instruct-fp8-fast"
+        );
+        assert_eq!(
+            resolve_cloudflare_llm(Some("@cf/meta/llama-3.1-8b-instruct-fast")),
+            "@cf/meta/llama-3.1-8b-instruct-fp8-fast"
+        );
+    }
+
+    #[test]
+    fn cloudflare_translate_payload_is_chat_messages() {
+        let chat = cloudflare_translate_payload("en", "ro", "hello");
+        assert!(chat.get("messages").is_some());
+        assert!(chat.get("text").is_none());
+    }
+
+    #[test]
+    fn cloudflare_translated_text_reads_m2m_and_chat_shapes() {
+        let m2m = serde_json::json!({ "result": { "translated_text": "salut" } });
+        assert_eq!(cloudflare_translated_text(&m2m), "salut");
+        let chat = serde_json::json!({ "result": { "response": "salut" } });
+        assert_eq!(cloudflare_translated_text(&chat), "salut");
     }
 
     #[test]

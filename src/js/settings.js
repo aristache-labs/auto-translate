@@ -20,7 +20,7 @@ const DEFAULT_SETTINGS = {
   cloudflare_account_id: '',
   cloudflare_api_token: '',
   cloudflare_stt_model: '@cf/openai/whisper-large-v3-turbo',
-  cloudflare_llm_model: '@cf/meta/llama-3.1-8b-instruct-fast',  // Updated: instruct-fast
+  cloudflare_llm_model: '@cf/meta/llama-3.1-8b-instruct-fp8-fast',
   cloudflare_enabled: true,
   assemblyai_enabled: true,
   assemblyai_api_key: '',
@@ -97,7 +97,7 @@ async load() {
     const settings = await invoke('get_settings');
     this.settings = { ...DEFAULT_SETTINGS, ...settings };
     this.settings.translation_mode = migrateTranslationMode(this.settings.translation_mode);
-    if (this.settings.llm_provider === 'openrouter' || this.settings.llm_provider === 'engine') {
+    if (this.settings.llm_provider === 'openrouter' || this.settings.llm_provider === 'engine' || this.settings.llm_provider === 'groq-llm' || this.settings.llm_provider === 'groq') {
       this.settings.llm_provider = 'automatic';
     }
 
@@ -119,14 +119,11 @@ _migrateModelDefaults(settings) {
   const ALLOWED_GROQ_LLM = [
     'openai/gpt-oss-120b',
     'openai/gpt-oss-20b',
-    'meta-llama/llama-prompt-guard-2-22m',
-    'meta-llama/llama-prompt-guard-2-86m',
     'qwen/qwen3.6-27b',
   ];
   const ALLOWED_CF_LLM = [
-    '@cf/meta/llama-3.1-8b-instruct-fast',
+    '@cf/meta/llama-3.1-8b-instruct-fp8-fast',
     '@cf/qwen/qwen3-30b-a3b-fp8',
-    '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
   ];
   const ALLOWED_GEMINI = [
     'gemini-3.5-flash-lite',

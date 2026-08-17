@@ -29,11 +29,11 @@ test('deprecated model migration updates obsolete defaults while keeping custom 
         oldSettings.groq_llm_model = 'openai/gpt-oss-20b';
     }
     if (oldSettings.cloudflare_llm_model === DEPRECATED_CF_MODEL) {
-        oldSettings.cloudflare_llm_model = '@cf/meta/llama-3.1-8b-instruct-fast';
+        oldSettings.cloudflare_llm_model = '@cf/meta/llama-3.1-8b-instruct-fp8-fast';
     }
 
     assert.equal(oldSettings.groq_llm_model, 'openai/gpt-oss-20b');
-    assert.equal(oldSettings.cloudflare_llm_model, '@cf/meta/llama-3.1-8b-instruct-fast');
+    assert.equal(oldSettings.cloudflare_llm_model, '@cf/meta/llama-3.1-8b-instruct-fp8-fast');
     assert.equal(oldSettings.groq_stt_model, 'whisper-large-v3-turbo');
     assert.equal(oldSettings.custom_model, 'my-custom-model');
 });
@@ -77,7 +77,7 @@ test('effective translation chain reflects active STT engine and enabled adapter
         ...settings,
         groq_api_key: 'gsk_123',
     }, 'groq');
-    assert.deepEqual(transChain, ['azure', 'gemini', 'groq-llm', 'ollama']);
+    assert.deepEqual(transChain, ['azure', 'gemini', 'ollama']);
 });
 
 test('single flight fallback executes exactly once concurrently', async () => {
