@@ -1,5 +1,7 @@
 /** Shared engine/mode helpers — no DOM or Tauri imports. */
 
+import { wantsSpeechmaticsTranslation } from './provider-orchestrator.js';
+
 export const SUPPORTED_MODES = ['automatic', 'assemblyai', 'speechmatics', 'groq', 'cloudflare', 'local'];
 export const LEGACY_MODES = ['soniox', 'openai', 'qwen', 'standard'];
 
@@ -128,7 +130,7 @@ export function clientConfigFromSettings(settings, mode = 'groq') {
         assemblyaiEndOfTurnConfidence: settings.assemblyai_end_of_turn_confidence ?? 0.4,
         speechmaticsApiKey: settings.speechmatics_api_key || '',
         speechmaticsModel: settings.speechmatics_model || 'enhanced',
-        enableTranslation: (settings.llm_provider || 'automatic') === 'speechmatics',
+        enableTranslation: wantsSpeechmaticsTranslation(settings),
     };
 }
 

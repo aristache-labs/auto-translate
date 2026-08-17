@@ -289,7 +289,6 @@ export class SpeechmaticsClient {
             const transcript = extractTranscript(msg);
             const speaker = extractSpeaker(msg);
             const language = msg.metadata?.language || this._config.sourceLanguage;
-            this.onProvisional?.('', speaker, language);
             if (transcript) this.onOriginal?.(transcript, speaker, language);
             return;
         }

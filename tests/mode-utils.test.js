@@ -96,6 +96,19 @@ test('client config uses sourceLanguage/targetLanguage', () => {
         llm_provider: 'automatic',
     }, 'groq');
     assert.equal(auto.llmProvider, 'automatic');
+    assert.equal(auto.enableTranslation, true);
+    assert.equal(clientConfigFromSettings({
+        llm_provider: 'azure',
+        llm_fallback: true,
+    }).enableTranslation, true);
+    assert.equal(clientConfigFromSettings({
+        llm_provider: 'azure',
+        llm_fallback: false,
+    }).enableTranslation, false);
+    assert.equal(clientConfigFromSettings({
+        llm_provider: 'speechmatics',
+        llm_fallback: false,
+    }).enableTranslation, true);
 });
 
 test('single-flight fallback starts Cloudflare once', async () => {

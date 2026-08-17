@@ -27,7 +27,7 @@ import {
     noteProviderSuccess,
     isCircuitBreakerHalfOpen,
     usesSpeechmaticsTranslation,
-    migrateLlmProvider,
+    wantsSpeechmaticsTranslation,
     LIVE_TRANSLATION_TIMEOUT_MS,
     LIVE_TRANSLATION_MIN_INTERVAL_MS,
     LIVE_TRANSLATION_MIN_NEW_WORDS,
@@ -208,7 +208,7 @@ export const appLiveMethods = {
                     await client.connect({
                         ...config,
                         model: sttModel || 'enhanced',
-                        enableTranslation: migrateLlmProvider(settings.llm_provider) === 'speechmatics',
+                        enableTranslation: wantsSpeechmaticsTranslation(settings),
                         sourceLanguage: this.sessionSourceLang || settings.source_language || 'auto',
                         targetLanguage: this.sessionTargetLang || settings.target_language || 'vi',
                     });
@@ -512,11 +512,16 @@ export const appLiveMethods = {
         const chunk = (text || '').trim();
         if (!chunk) return;
         console.log(`[live-tx] FINAL_TURN chars=${chunk.length} speaker=${speaker} lang=${language}`);
-        this._invalidateLiveTranslation();
-        this.transcriptUI.clearProvisional();
+        const inSessionTx = this._usesInSessionTranslation();
+        if (inSessionTx) {
+            this.transcriptUI.clearProvisional({ keepTranslation: true });
+        } else {
+            this._invalidateLiveTranslation();
+            this.transcriptUI.clearProvisional();
+        }
         this.transcriptUI.addOriginal(chunk, speaker, language);
         this._lastCommittedOriginal = chunk;
-        if (this._usesInSessionTranslation()) {
+        if (inSessionTx) {
             this._armSpeechmaticsTextFallback(chunk, language);
             this._maybeRecoverStt();
             return;

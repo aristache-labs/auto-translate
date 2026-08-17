@@ -106,7 +106,6 @@ test('connect mints JWT, starts session, and maps partials/finals', async () => 
     });
     assert.deepEqual(events, [
         ['prov', 'Hello'],
-        ['prov', ''],
         ['orig', 'Hello, welcome.'],
     ]);
 });

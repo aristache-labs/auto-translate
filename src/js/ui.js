@@ -54,6 +54,34 @@ function repeatsRecentTail(recentText, candidate) {
         || ((next.length >= 12 || meaningfulSingleWord) && recent.endsWith(next));
 }
 
+function liveRemainder(committed, draft) {
+    const a = (committed || '').trim();
+    const b = (draft || '').trim();
+    if (!b) return '';
+    if (!a) return b;
+    if (repeatsRecentTail(a, b)) return '';
+    const lowerA = a.toLocaleLowerCase();
+    const lowerB = b.toLocaleLowerCase();
+    if (lowerB.startsWith(lowerA)) {
+        return b.slice(a.length).replace(/^\s+/, '');
+    }
+    const overlap = overlappingWordCount(a.split(/\s+/), b.split(/\s+/));
+    if (overlap > 0) return b.split(/\s+/).slice(overlap).join(' ');
+    return b;
+}
+
+function languageCode(code) {
+    return String(code || '').trim().toLowerCase().split(/[-_]/)[0];
+}
+
+function sameConversationLanguage(a, b) {
+    if (!a || !b) return true;
+    const left = languageCode(a);
+    const right = languageCode(b);
+    if (!left || !right || left === 'auto' || right === 'auto') return true;
+    return left === right;
+}
+
 /**
  * Transcript UI — paired live interpretation with speaker diarization.
  *
@@ -333,15 +361,17 @@ export class TranscriptUI {
     /**
      * Clear provisional text
      */
-    clearProvisional() {
+    clearProvisional({ keepTranslation = false } = {}) {
         this.provisionalText = '';
         this.provisionalSpeaker = null;
         this.provisionalLanguage = null;
         this.provisionalVisible = 0;
         this._provisionalStartedAt = 0;
-        this.translationProvisionalText = '';
-        this.translationProvisionalVisible = 0;
-        this._translationProvisionalStartedAt = 0;
+        if (!keepTranslation) {
+            this.translationProvisionalText = '';
+            this.translationProvisionalVisible = 0;
+            this._translationProvisionalStartedAt = 0;
+        }
         this._render();
     }
 
@@ -845,34 +875,43 @@ export class TranscriptUI {
         const scrollState = this._getScrollState(this.container);
         let rows = '';
         const translated = this.segments.filter(seg => seg.status === 'translated' && seg.translation);
+        const draft = this._liveDraftState();
+        const liveTranslation = this.translationProvisionalText;
+        const isTargetStream = Boolean(this.sourceProvisionalText) || this.provider === 'qwen';
+        const latest = this.segments[this.segments.length - 1];
+        const recentFinal = isTargetStream || liveTranslation ? latest?.translation : latest?.original;
+        const displayProvisional = draft.attach
+            ? ''
+            : (liveTranslation
+                ? (repeatsRecentTail(recentFinal, liveTranslation) ? '' : liveTranslation)
+                : (repeatsRecentTail(recentFinal, this.provisionalText) ? '' : this.provisionalText));
+        const provisionalVisible = liveTranslation
+            ? this.translationProvisionalVisible
+            : this.provisionalVisible;
 
         translated.forEach((seg, index) => {
             const total = textLength(seg.translation);
             const visible = seg.translationVisible ?? total;
-            const typing = visible < total;
+            const isLast = index === translated.length - 1;
+            const tail = isLast && draft.attach
+                ? (liveTranslation ? draft.targetText : draft.sourceText)
+                : '';
+            const typing = visible < total || !!tail;
             const confidenceClass = (seg.confidence !== null && seg.confidence < 0.7)
                 ? ' low-confidence'
                 : '';
-            const currentClass = index === translated.length - 1 ? ' is-current' : '';
+            const currentClass = isLast ? ' is-current' : '';
             rows += `
                 <article class="translation-line${currentClass}${typing ? ' is-typing' : ''}">
                     ${this._pairMeta(seg)}
                     <p class="translation-copy${confidenceClass}" aria-label="${this._esc(seg.translation)}">
-                        ${this._animatedMarkup(seg.translation, visible)}
+                        ${this._animatedMarkup(seg.translation, visible)}${tail
+                            ? `<span class="source-draft live-tail">${this._animatedMarkup(tail, provisionalVisible)}</span>`
+                            : ''}
                     </p>
                 </article>`;
         });
 
-        const latest = this.segments[this.segments.length - 1];
-        const isTargetStream = Boolean(this.sourceProvisionalText) || this.provider === 'qwen';
-        const liveTranslation = this.translationProvisionalText;
-        const recentFinal = isTargetStream || liveTranslation ? latest?.translation : latest?.original;
-        const displayProvisional = liveTranslation
-            ? (repeatsRecentTail(recentFinal, liveTranslation) ? '' : liveTranslation)
-            : (repeatsRecentTail(recentFinal, this.provisionalText) ? '' : this.provisionalText);
-        const provisionalVisible = liveTranslation
-            ? this.translationProvisionalVisible
-            : this.provisionalVisible;
         if (displayProvisional) {
             rows += `
                 <article class="translation-line provisional-line is-current is-typing">
@@ -896,29 +935,37 @@ export class TranscriptUI {
     _renderDual() {
         const scrollState = this._getScrollState(this.container);
         let pairs = '';
+        const draft = this._liveDraftState();
 
         this.segments.forEach((seg, index) => {
             const originalTotal = textLength(seg.original || '');
             const translationTotal = textLength(seg.translation || '');
             const originalVisible = seg.originalVisible ?? originalTotal;
             const translationVisible = seg.translationVisible ?? translationTotal;
-            const sourceTyping = originalVisible < originalTotal;
-            const targetTyping = translationVisible < translationTotal;
+            const isLast = index === this.segments.length - 1;
+            const sourceDraft = isLast && draft.attach ? draft.sourceText : '';
+            const targetDraft = isLast && draft.attach ? draft.targetText : '';
+            const sourceTyping = originalVisible < originalTotal || !!sourceDraft;
+            const targetTyping = translationVisible < translationTotal || !!targetDraft;
             const isPending = (seg.pendingTranslations || 0) > 0
                 || seg.status === 'original'
-                || !seg.translation;
+                || !seg.translation
+                || !!targetDraft;
             const confidenceClass = (seg.confidence !== null && seg.confidence < 0.7)
                 ? ' low-confidence'
                 : '';
-            const isCurrent = index === this.segments.length - 1;
+            const isCurrent = isLast;
             pairs += `
                 <article class="transcript-pair${isCurrent ? ' is-current' : ''}${sourceTyping || targetTyping ? ' is-typing' : ''}">
                     <div class="pair-cell pair-source">
                         ${this._pairMeta(seg)}
-                        <p class="pair-copy source-copy" aria-label="${this._esc(seg.original || '')}">
+                        <p class="pair-copy source-copy" aria-label="${this._esc((seg.original || '') + (sourceDraft ? ` ${sourceDraft}` : ''))}">
                             ${seg.original
                                 ? this._animatedMarkup(seg.original, originalVisible)
-                                : '<span class="empty-copy" aria-hidden="true">Source unavailable</span>'}
+                                : (!sourceDraft ? '<span class="empty-copy" aria-hidden="true">Source unavailable</span>' : '')}
+                            ${sourceDraft
+                                ? `<span class="source-draft live-tail">${this._animatedMarkup(sourceDraft, draft.sourceVisible)}</span>`
+                                : ''}
                         </p>
                     </div>
                     <div class="pair-direction" aria-hidden="true"><span>→</span></div>
@@ -926,9 +973,12 @@ export class TranscriptUI {
                         <div class="pair-meta target-meta">
                             <span class="${isPending ? 'translating-label' : 'translated-label'}">${isPending ? 'Translating' : 'Translated'}</span>
                         </div>
-                        <p class="pair-copy target-copy${confidenceClass}" aria-label="${this._esc(seg.translation || 'Translation pending')}">
+                        <p class="pair-copy target-copy${confidenceClass}" aria-label="${this._esc((seg.translation || '') + (targetDraft ? ` ${targetDraft}` : '') || 'Translation pending')}">
                             ${seg.translation ? this._animatedMarkup(seg.translation, translationVisible) : ''}
-                            ${isPending
+                            ${targetDraft
+                                ? `<span class="source-draft live-tail">${this._animatedMarkup(targetDraft, draft.targetVisible)}</span>`
+                                : ''}
+                            ${isPending && !targetDraft
                                 ? `<span class="translation-pending${seg.translation ? ' is-inline' : ''}" aria-hidden="true"><i></i><i></i><i></i></span>`
                                 : ''}
                         </p>
@@ -936,19 +986,12 @@ export class TranscriptUI {
                 </article>`;
         });
 
-        if (this.sourceProvisionalText || this.provisionalText || this.translationProvisionalText) {
-            const usingOpenAi = this.provider === 'openai';
-            const latest = this.segments[this.segments.length - 1];
-            const rawSourceText = usingOpenAi ? this.sourceProvisionalText : this.provisionalText;
-            const sourceVisible = usingOpenAi ? this.sourceProvisionalVisible : this.provisionalVisible;
-            const rawTargetText = usingOpenAi
-                ? this.provisionalText
-                : this.translationProvisionalText;
-            const targetVisible = usingOpenAi
-                ? this.provisionalVisible
-                : this.translationProvisionalVisible;
-            const sourceText = repeatsRecentTail(latest?.original, rawSourceText) ? '' : rawSourceText;
-            const targetText = repeatsRecentTail(latest?.translation, rawTargetText) ? '' : rawTargetText;
+        if (!draft.attach && (this.sourceProvisionalText || this.provisionalText || this.translationProvisionalText)) {
+            const usingOpenAi = draft.usingOpenAi;
+            const sourceText = draft.sourceText;
+            const targetText = draft.targetText;
+            const sourceVisible = draft.sourceVisible;
+            const targetVisible = draft.targetVisible;
             if (sourceText || targetText) pairs += `
                 <article class="transcript-pair provisional-pair is-current is-typing">
                     <div class="pair-cell pair-source">
@@ -1002,10 +1045,38 @@ export class TranscriptUI {
         }
     }
 
+    _canAttachLiveDraft(last) {
+        if (!last) return false;
+        if (this.provisionalSpeaker && last.speaker && this.provisionalSpeaker !== last.speaker) return false;
+        if (!sameConversationLanguage(this.provisionalLanguage, last.language)) return false;
+        const lastAt = last.updatedAt || last.createdAt || 0;
+        if (Date.now() - lastAt > MERGE_MAX_GAP_MS) return false;
+        const committed = last.original || last.translation || '';
+        return committed.length <= MERGE_MAX_CHARS;
+    }
+
+    _liveDraftState() {
+        const usingOpenAi = this.provider === 'openai';
+        const rawSource = usingOpenAi ? this.sourceProvisionalText : this.provisionalText;
+        const rawTarget = usingOpenAi ? this.provisionalText : this.translationProvisionalText;
+        const last = this.segments[this.segments.length - 1];
+        const sourceText = liveRemainder(last?.original, rawSource);
+        const targetText = liveRemainder(last?.translation, rawTarget);
+        return {
+            usingOpenAi,
+            attach: this._canAttachLiveDraft(last),
+            sourceText,
+            targetText,
+            sourceVisible: usingOpenAi ? this.sourceProvisionalVisible : this.provisionalVisible,
+            targetVisible: usingOpenAi ? this.provisionalVisible : this.translationProvisionalVisible,
+            hasLooseDraft: !!(sourceText || targetText),
+        };
+    }
+
     _canMergeOriginal(last, chunk, speaker, language) {
         if (!last?.original) return false;
         if (speaker && last.speaker && speaker !== last.speaker) return false;
-        if (language && last.language && language !== last.language) return false;
+        if (!sameConversationLanguage(language, last.language)) return false;
         const lastAt = last.updatedAt || last.createdAt || 0;
         if (Date.now() - lastAt > MERGE_MAX_GAP_MS) return false;
         const combined = joinSpeech(last.original, chunk);

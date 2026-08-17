@@ -10,6 +10,7 @@ import {
     resetAllCircuitBreakers,
     getCircuitBreakerStatuses,
     migrateLlmProvider,
+    wantsSpeechmaticsTranslation,
 } from './provider-orchestrator.js';
 import { ollamaTranslator } from './ollama-translator.js';
 import {
@@ -1042,15 +1043,13 @@ export const appSettingsMethods = {
         }
         const transEl = document.getElementById('chain-translation-display');
         if (transEl) {
-            const llm = migrateLlmProvider(formSettings.llm_provider);
             const sttHint = this.activeSttProvider || migrateTranslationMode(formSettings.translation_mode);
-            if (llm === 'speechmatics') {
-                const parts = sttHint === 'speechmatics' ? ['speechmatics (in-session)'] : [];
-                if (formSettings.llm_fallback !== false) parts.push(...transChain);
-                transEl.textContent = parts.length ? parts.join(' → ') : 'None configured';
-            } else {
-                transEl.textContent = transChain.length > 0 ? transChain.join(' → ') : 'None configured';
+            const parts = [];
+            if (wantsSpeechmaticsTranslation(formSettings) && sttHint === 'speechmatics') {
+                parts.push('speechmatics (in-session)');
             }
+            parts.push(...transChain);
+            transEl.textContent = parts.length ? parts.join(' → ') : 'None configured';
         }
         const runtimeEl = document.getElementById('chain-runtime-stt');
         if (runtimeEl) {

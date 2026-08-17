@@ -28,6 +28,8 @@ import {
   ERROR_TYPES,
   shouldFireLiveTranslation,
   LIVE_TRANSLATION_TIMEOUT_MS,
+  usesSpeechmaticsTranslation,
+  wantsSpeechmaticsTranslation,
 } from '../src/js/provider-orchestrator.js';
 
 const FULL_SETTINGS = {
@@ -231,6 +233,46 @@ test('Speechmatics LLM uses in-session translation and optional text fallback', 
     preferredRecoveryStt({ ...FULL_SETTINGS, translation_mode: 'speechmatics' }, { isAppleSilicon: true }, 'groq'),
     'speechmatics',
   );
+});
+
+test('Automatic LLM and LLM fallback use Speechmatics translation only on Speechmatics STT', () => {
+  assert.equal(wantsSpeechmaticsTranslation({ ...FULL_SETTINGS, llm_provider: 'automatic' }), true);
+  assert.equal(usesSpeechmaticsTranslation({ ...FULL_SETTINGS, llm_provider: 'automatic' }, 'speechmatics'), true);
+  assert.equal(usesSpeechmaticsTranslation({ ...FULL_SETTINGS, llm_provider: 'automatic' }, 'assemblyai'), false);
+  assert.equal(wantsSpeechmaticsTranslation({
+    ...FULL_SETTINGS,
+    llm_provider: 'azure',
+    llm_fallback: true,
+  }), true);
+  assert.equal(usesSpeechmaticsTranslation({
+    ...FULL_SETTINGS,
+    llm_provider: 'azure',
+    llm_fallback: true,
+  }, 'speechmatics'), true);
+  assert.equal(usesSpeechmaticsTranslation({
+    ...FULL_SETTINGS,
+    llm_provider: 'azure',
+    llm_fallback: true,
+  }, 'groq'), false);
+  assert.equal(wantsSpeechmaticsTranslation({
+    ...FULL_SETTINGS,
+    llm_provider: 'azure',
+    llm_fallback: false,
+  }), false);
+  assert.equal(usesSpeechmaticsTranslation({
+    ...FULL_SETTINGS,
+    llm_provider: 'azure',
+    llm_fallback: false,
+  }, 'speechmatics'), false);
+  assert.deepEqual(getSttStartOrder({
+    ...FULL_SETTINGS,
+    translation_mode: 'automatic',
+    llm_provider: 'automatic',
+  }, { isAppleSilicon: true }), ['assemblyai', 'speechmatics', 'groq', 'cloudflare', 'local-stt']);
+  assert.deepEqual(getEffectiveTranslationChain({
+    ...FULL_SETTINGS,
+    llm_provider: 'automatic',
+  }, 'speechmatics'), ['azure', 'gemini', 'ollama']);
 });
 
 test('translation failures rotate through the configured order and ignore stale jobs', async () => {

@@ -403,7 +403,7 @@
           </select>
           <p class="hint" id="hint-mode-automatic">Uses the first healthy STT provider in the chain. Temporary fallback does not change this setting.</p>
           <p class="hint" id="hint-mode-assemblyai" style="display:none">Streaming STT · translation uses the independent chain</p>
-          <p class="hint" id="hint-mode-speechmatics" style="display:none">Realtime STT · pick Speechmatics under LLM for in-session translation</p>
+          <p class="hint" id="hint-mode-speechmatics" style="display:none">Realtime STT · Automatic LLM and LLM fallback can use in-session translation on this socket</p>
           <p class="hint" id="hint-mode-groq" style="display:none">Cloud · Whisper v3 · ~$0.02/hr · Fallback continues down the chain</p>
           <p class="hint" id="hint-mode-cloudflare" style="display:none">Cloud · Whisper v3 · Reliable backup engine</p>
           <p class="hint" id="hint-mode-local" style="display:none">Offline · free · ~3–4s delay</p>
@@ -412,7 +412,7 @@
         <div class="settings-section" id="section-llm-provider">
           <span class="field-label">LLM</span>
           <select id="select-llm-provider">
-            <option value="automatic">Automatic — Azure Translator → Gemini Flash-Lite → Ollama</option>
+            <option value="automatic">Automatic — Speechmatics → Azure Translator → Gemini Flash-Lite → Ollama</option>
             <option value="speechmatics">Speechmatics (in-session)</option>
             <option value="azure">Azure Translator</option>
             <option value="gemini">Gemini Flash-Lite</option>
@@ -421,9 +421,9 @@
           <label class="checkbox-label" id="label-llm-fallback" style="margin-top:8px; display:none">
             <input type="checkbox" id="check-llm-fallback" checked /> Fallback if this provider fails
           </label>
-          <p class="hint" id="hint-llm-fallback" style="display:none">Uses the selected LLM first, then Azure → Gemini → Ollama (skipping the one you picked).</p>
-          <p class="hint" id="hint-llm-automatic">Engine above is STT. Translation uses Azure → Gemini → Ollama independently. Groq and Cloudflare are STT-only. Speechmatics LLM translates on the same realtime socket.</p>
-          <p class="hint" id="hint-llm-speechmatics" style="display:none">In-session translation on the Speechmatics WebSocket (English ↔ 30+ languages). Enable fallback to continue with Azure → Gemini → Ollama if Speechmatics STT is not active or translation is late.</p>
+          <p class="hint" id="hint-llm-fallback" style="display:none">Uses the selected LLM first, then Speechmatics (in-session, only when Speechmatics STT is active) → Azure → Gemini → Ollama (skipping the one you picked). Speechmatics is not used as an STT fallback.</p>
+          <p class="hint" id="hint-llm-automatic">Engine above is STT. Translation prefers Speechmatics in-session when that STT is active, then Azure → Gemini → Ollama. Groq and Cloudflare are STT-only.</p>
+          <p class="hint" id="hint-llm-speechmatics" style="display:none">In-session translation on the Speechmatics WebSocket (English ↔ 30+ languages). Enable fallback to continue with Azure → Gemini → Ollama if translation is late.</p>
         </div>
 
         <div class="settings-section" id="section-assemblyai-key">

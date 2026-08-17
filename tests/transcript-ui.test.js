@@ -210,6 +210,41 @@ test('a short meaningful provisional tail is not repeated as a new live line', (
     assert.doesNotMatch(ui.contentEl.innerHTML, /provisional-pair/);
 });
 
+test('a continuation partial stays on the current pair instead of a listening-live row', (t) => {
+    const ui = withFakeDom(t);
+    ui._reducedMotion = true;
+    ui.configure({ viewMode: 'dual', sourceLanguage: 'en', targetLanguage: 'ro' });
+    ui.addOriginal('Hello everyone. Welcome back. I am so', null, 'en');
+    ui.addTranslation('Bună ziua tuturor. Bun venit înapoi.');
+    ui.setProvisional('happy', null, 'auto');
+    ui.setTranslationProvisional('I. În ceea ce privește');
+
+    const html = ui.contentEl.innerHTML;
+    assert.doesNotMatch(html, /Listening live/i);
+    assert.doesNotMatch(html, /provisional-pair/);
+    assert.equal((html.match(/class="transcript-pair(?:\s|")/g) || []).length, 1);
+    assert.match(html, /live-tail/);
+    assert.match(html, /happy/);
+    assert.match(html, /I\. În ceea ce privește/);
+});
+
+test('clearProvisional can keep the live translation draft on the current pair', (t) => {
+    const ui = withFakeDom(t);
+    ui._reducedMotion = true;
+    ui.configure({ viewMode: 'dual', sourceLanguage: 'en', targetLanguage: 'ro' });
+    ui.addOriginal('I am so', null, 'en');
+    ui.setProvisional('happy', null, 'en');
+    ui.setTranslationProvisional('sunt atât de');
+    ui.clearProvisional({ keepTranslation: true });
+    ui.addOriginal('happy', null, 'en');
+
+    assert.equal(ui.segments.length, 1);
+    assert.equal(ui.segments[0].original, 'I am so happy');
+    assert.equal(ui.translationProvisionalText, 'sunt atât de');
+    assert.doesNotMatch(ui.contentEl.innerHTML, /Listening live/i);
+    assert.match(ui.contentEl.innerHTML, /sunt atât de/);
+});
+
 test('live translation draft accepts a rephrased longer update', (t) => {
     const ui = withFakeDom(t);
     ui._reducedMotion = true;

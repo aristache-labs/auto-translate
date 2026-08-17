@@ -431,8 +431,14 @@ export function getEffectiveSTTChain(settings = {}, platform = {}) {
   });
 }
 
+export function wantsSpeechmaticsTranslation(settings = {}) {
+  const llm = migrateLlmProvider(settings.llm_provider);
+  if (llm === 'speechmatics' || llm === 'automatic') return true;
+  return settings.llm_fallback !== false && LLM_PROVIDER_IDS.includes(llm);
+}
+
 export function usesSpeechmaticsTranslation(settings = {}, sttProvider = '') {
-  return migrateLlmProvider(settings.llm_provider) === 'speechmatics'
+  return wantsSpeechmaticsTranslation(settings)
     && String(sttProvider || '') === 'speechmatics';
 }
 
@@ -732,6 +738,7 @@ export default {
   translationOrderForSettings,
   migrateLlmProvider,
   usesSpeechmaticsTranslation,
+  wantsSpeechmaticsTranslation,
   TRANSLATION_CHAIN_DEFAULT,
   getEffectiveSTTChain,
   setSessionStickyProvider,
