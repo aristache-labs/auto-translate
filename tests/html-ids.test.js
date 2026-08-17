@@ -1,11 +1,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { REQUIRED_INIT_IDS } from '../src/js/mode-utils.js';
 
 const html = readFileSync(join(process.cwd(), 'src', 'index.html'), 'utf8');
-const appJs = readFileSync(join(process.cwd(), 'src', 'js', 'app.js'), 'utf8');
+const jsDir = join(process.cwd(), 'src', 'js');
+const appJs = readdirSync(jsDir)
+    .filter((f) => f.startsWith('app') && f.endsWith('.js') && !f.endsWith('.backup'))
+    .map((f) => readFileSync(join(jsDir, f), 'utf8'))
+    .join('\n');
 
 test('current HTML has every required init ID', () => {
     for (const id of REQUIRED_INIT_IDS) {

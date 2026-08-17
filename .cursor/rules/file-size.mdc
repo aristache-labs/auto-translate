@@ -1,0 +1,22 @@
+---
+description: Keep project source files under 1500 lines; split rather than grow.
+alwaysApply: true
+---
+
+# File size limit
+
+- Do not add code that makes any project source file in `src/`, `src-tauri/src/`, or `tests/` exceed **1500 lines**.
+- If a change would go over 1500 lines, extract a cohesive module first, then make the change.
+- Do not edit or import `*.backup` files (including `src/js/app.js.backup`).
+- Ignore `node_modules`, `.opencode`, and `.cursor-backup` when counting.
+
+```javascript
+// BAD — keep growing app.js
+class App {
+    // 1600+ lines of mixed settings / TTS / live / library logic
+}
+
+// GOOD — mix focused modules onto App.prototype
+import { appSettingsMethods } from './app-settings.js';
+Object.assign(App.prototype, appSettingsMethods);
+```
